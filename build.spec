@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-
-block_cipher = None
+# Compatible with PyInstaller 6.x (zlib_data and cipher removed)
 
 a = Analysis(
     ['src/main.py'],
@@ -25,19 +24,15 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zlib_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
     [],
     name='AIApp',
@@ -53,5 +48,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version_file=None,
 )
