@@ -18,6 +18,7 @@ from notifier import notify_report_ready
 from ui.settings_dialog import SettingsDialog
 from ui.server_settings_dialog import ServerSettingsDialog
 from ui.data_dialog import DataDialog
+from ui.connect_dialog import ConnectDialog
 
 
 class MainWindow(QMainWindow):
@@ -186,6 +187,12 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        connect_action = QAction("How to Connect…", self)
+        connect_action.triggered.connect(self._open_connect_help)
+        menu.addAction(connect_action)
+
+        menu.addSeparator()
+
         settings_action = QAction("Settings", self)
         if server_running:
             settings_action.setEnabled(False)
@@ -311,6 +318,10 @@ class MainWindow(QMainWindow):
             self._toggle_btn.setText("▼  Close Report")
 
     # ------------------------------------------------------------------ dialogs
+
+    def _open_connect_help(self):
+        dlg = ConnectDialog(self.settings["server"]["port"], self)
+        dlg.exec_()
 
     def _open_settings(self):
         dlg = SettingsDialog(self.settings, self)

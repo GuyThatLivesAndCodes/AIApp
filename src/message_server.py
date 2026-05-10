@@ -1,21 +1,19 @@
-import socket
+import json
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 from PyQt5.QtCore import QObject, pyqtSignal
 
 
-def parse_message(raw: str) -> dict | None:
-    """Parse a message in the key:value line format."""
+def _parse_kv(raw: str) -> dict:
+    """Parse key:value line format."""
     fields = {}
     for line in raw.strip().splitlines():
         line = line.strip()
-        if not line:
-            continue
         if ":" in line:
             key, _, value = line.partition(":")
             fields[key.strip().lower()] = value.strip()
-    if "sender" in fields and "content" in fields and "date" in fields:
-        return fields
-    return None
+    return fields
 
 
 class MessageServer(QObject):
@@ -26,76 +24,83 @@ class MessageServer(QObject):
     def __init__(self, port: int = 774):
         super().__init__()
         self.port = port
-        self._running = False
-        self._server_socket: socket.socket | None = None
+        self._http_server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     @property
     def running(self) -> bool:
-        return self._running
+        return self._http_server is not None
 
     def start(self, port: int | None = None) -> bool:
-        if self._running:
+        if self.running:
             return True
         if port is not None:
             self.port = port
+
+        emitter = self  # captured in handler closure
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                if self.path not in ("/message", "/message/"):
+                    self._respond(404, {"error": "use POST /message"})
+                    return
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length).decode("utf-8", errors="replace")
+
+                # Accept JSON or key:value text
+                ct = self.headers.get("Content-Type", "")
+                if "json" in ct:
+                    try:
+                        data = json.loads(body)
+                    except json.JSONDecodeError:
+                        self._respond(400, {"error": "invalid JSON"})
+                        return
+                else:
+                    data = _parse_kv(body)
+
+                sender = str(data.get("sender", "")).strip()
+                content = str(data.get("content", "")).strip()
+                date = str(data.get("date", "")).strip()
+
+                if not (sender and content and date):
+                    self._respond(400, {"error": "sender, content and date are required"})
+                    return
+
+                emitter.message_received.emit(sender, content, date)
+                self._respond(200, {"status": "ok", "sender": sender})
+
+            def do_GET(self):
+                if self.path in ("/", "/health"):
+                    self._respond(200, {"status": "AIApp message server running"})
+                else:
+                    self._respond(404, {"error": "not found"})
+
+            def _respond(self, code: int, body: dict):
+                payload = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass  # suppress default stderr logging
+
         try:
-            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_socket.bind(("0.0.0.0", self.port))
-            self._server_socket.listen(10)
-            self._server_socket.settimeout(1.0)
-            self._running = True
-            self._thread = threading.Thread(target=self._accept_loop, daemon=True)
+            self._http_server = HTTPServer(("0.0.0.0", self.port), Handler)
+            self._thread = threading.Thread(
+                target=self._http_server.serve_forever, daemon=True
+            )
             self._thread.start()
             self.status_changed.emit(True, f"Listening on port {self.port}")
             return True
         except OSError as e:
+            self._http_server = None
             self.error_occurred.emit(f"Could not start server: {e}")
             return False
 
     def stop(self):
-        self._running = False
-        if self._server_socket:
-            try:
-                self._server_socket.close()
-            except Exception:
-                pass
-            self._server_socket = None
+        if self._http_server:
+            self._http_server.shutdown()
+            self._http_server = None
         self.status_changed.emit(False, "Server stopped")
-
-    def _accept_loop(self):
-        while self._running:
-            try:
-                conn, addr = self._server_socket.accept()
-                threading.Thread(
-                    target=self._handle_client, args=(conn, addr), daemon=True
-                ).start()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-
-    def _handle_client(self, conn: socket.socket, addr):
-        try:
-            chunks = []
-            conn.settimeout(5.0)
-            while True:
-                data = conn.recv(4096)
-                if not data:
-                    break
-                chunks.append(data)
-            raw = b"".join(chunks).decode("utf-8", errors="replace")
-            msg = parse_message(raw)
-            if msg:
-                self.message_received.emit(msg["sender"], msg["content"], msg["date"])
-                conn.sendall(b"OK\n")
-            else:
-                conn.sendall(b"ERR: invalid format\n")
-        except Exception:
-            pass
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
