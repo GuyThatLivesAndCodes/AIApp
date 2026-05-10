@@ -66,6 +66,7 @@ class Database:
 
     def _init_db(self):
         with self._connect() as conn:
+            # Create tables and sender index (no date_ts index yet — column may not exist on old DBs)
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,8 +76,7 @@ class Database:
                     date_ts     TEXT,
                     received_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
-                CREATE INDEX IF NOT EXISTS idx_msg_sender  ON messages(sender);
-                CREATE INDEX IF NOT EXISTS idx_msg_date_ts ON messages(date_ts);
+                CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender);
 
                 CREATE TABLE IF NOT EXISTS reports (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,11 +84,15 @@ class Database:
                     generated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
             """)
-            # Migration: add date_ts column to existing databases
+            # Migration: add date_ts to databases created before this column existed
             try:
                 conn.execute("ALTER TABLE messages ADD COLUMN date_ts TEXT")
             except sqlite3.OperationalError:
-                pass  # already exists
+                pass  # column already present
+            # Now safe to create the index — column is guaranteed to exist
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_msg_date_ts ON messages(date_ts)"
+            )
 
         # Backfill date_ts for any rows that are missing it
         self._backfill_date_ts()
