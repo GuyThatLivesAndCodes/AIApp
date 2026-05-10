@@ -1,0 +1,84 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches:
+      - claude/build-app-with-installer-GVa0m
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable with PyInstaller
+        run: pyinstaller build.spec --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+        shell: pwsh
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIApp-Windows-Installer
+          path: Output\AIApp_Setup.exe
+          retention-days: 30
+
+      - name: Generate release tag
+        id: tag
+        run: echo "tag=v1.0.0-build.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "AIApp Build ${{ github.run_number }}"
+          body: |
+            ## AIApp — Windows Installer
+
+            Automated build from commit `${{ github.sha }}`.
+
+            ### Install
+            1. Download `AIApp_Setup.exe` below
+            2. Run it — no admin rights required
+            3. Launch AIApp from the Start Menu or Desktop shortcut
+            4. Open **Settings** to configure your AI provider API key
+            5. Click **Serve → Start** to begin ingesting messages on port 774
+
+            ### Send a test message
+            ```
+            # PowerShell
+            $msg = "sender:Liam`ncontent:yo sarah broke up wit that football guy`ndate:5/9/2026 5:19PM"
+            $tcp = New-Object System.Net.Sockets.TcpClient("localhost", 774)
+            $stream = $tcp.GetStream()
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $tcp.Close()
+            ```
+          files: Output\AIApp_Setup.exe
+          draft: false
+          prerelease: false
