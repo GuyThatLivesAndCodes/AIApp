@@ -1,11 +1,62 @@
 import json
-import threading
-from typing import Callable, Optional
+from typing import Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from config import SYSTEM_PROMPT, TOOL_DEFINITIONS
 from database import Database
+
+
+# ------------------------------------------------------------------ context builder
+
+def _build_context_message(db: Database) -> str:
+    """
+    Feed the AI a snapshot of what's in the database so it can reason
+    immediately without fumbling through empty tool calls first.
+    """
+    total = db.get_message_count()
+    senders = db.get_senders()
+    recent = db.get_recent_messages(n=20)
+
+    lines = []
+
+    if total == 0:
+        lines.append("There are no messages in the directory yet.")
+        lines.append(
+            "Generate a brief report noting there's nothing to report right now."
+        )
+        return "\n".join(lines)
+
+    lines.append(
+        f"There are {total} message(s) in the directory from "
+        f"{len(senders)} sender(s): {', '.join(senders)}."
+    )
+    lines.append("")
+    lines.append(f"Here are the {len(recent)} most recent message(s) — read them carefully:")
+    lines.append("")
+
+    for msg in recent:
+        lines.append(
+            f"  [ID {msg['id']}] {msg['date']} | From: {msg['sender']}\n"
+            f"  {msg['content']}"
+        )
+
+    if total > len(recent):
+        lines.append("")
+        lines.append(
+            f"  (showing latest {len(recent)} of {total} total — "
+            f"use search_messages or get_raw_messages to retrieve older ones)"
+        )
+
+    lines.append("")
+    lines.append(
+        "Using the messages above (and any additional ones you fetch with tools), "
+        "generate your casual, direct report now. "
+        "If something significant happened — relationships, drama, plans — call it out. "
+        "Keep it one or two sentences max."
+    )
+
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ tool executor
@@ -68,7 +119,14 @@ def _anthropic_tools():
 
 def _openai_tools():
     return [
-        {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            },
+        }
         for t in TOOL_DEFINITIONS
     ]
 
@@ -80,9 +138,10 @@ def _run_anthropic(db: Database, settings: dict) -> str:
 
     client = anthropic.Anthropic(api_key=settings["ai"]["anthropic_api_key"])
     model = settings["ai"].get("anthropic_model", "claude-opus-4-7")
-    messages = [{"role": "user", "content": "Generate a report based on the latest messages."}]
+    user_msg = _build_context_message(db)
+    messages = [{"role": "user", "content": user_msg}]
 
-    for _ in range(10):
+    for _ in range(15):
         resp = client.messages.create(
             model=model,
             max_tokens=1024,
@@ -120,14 +179,20 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
         kwargs["base_url"] = base_url
 
     client = OpenAI(**kwargs)
+    user_msg = _build_context_message(db)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "Generate a report based on the latest messages."},
+        {"role": "user", "content": user_msg},
     ]
     tools = _openai_tools()
 
-    for _ in range(10):
-        resp = client.chat.completions.create(model=model, messages=messages, tools=tools, tool_choice="auto")
+    for _ in range(15):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+        )
         choice = resp.choices[0]
 
         if choice.finish_reason == "stop":
@@ -147,20 +212,19 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
     return "Report generation stopped unexpectedly."
 
 
+# ------------------------------------------------------------------ local model detection
+
 def _detect_local_model(host: str, port: int, provider: str) -> str:
-    """Auto-detect first available model on Ollama or LM Studio."""
     import requests
     try:
         if provider == "ollama":
             r = requests.get(f"http://{host}:{port}/api/tags", timeout=3)
-            data = r.json()
-            models = data.get("models", [])
+            models = r.json().get("models", [])
             if models:
                 return models[0].get("name", "llama3")
         else:
             r = requests.get(f"http://{host}:{port}/v1/models", timeout=3)
-            data = r.json()
-            models = data.get("data", [])
+            models = r.json().get("data", [])
             if models:
                 return models[0].get("id", "local-model")
     except Exception:
@@ -168,23 +232,25 @@ def _detect_local_model(host: str, port: int, provider: str) -> str:
     return "local-model"
 
 
+# ------------------------------------------------------------------ public entry point
+
 def generate_report(db: Database, settings: dict) -> str:
     provider = settings["ai"].get("provider", "anthropic")
 
     if provider == "anthropic":
         if not settings["ai"].get("anthropic_api_key"):
-            return "report: no anthropic api key configured, add one in settings to get reports"
+            return "report: no anthropic api key configured — add one in Settings"
         return _run_anthropic(db, settings)
 
     elif provider == "openai":
         if not settings["ai"].get("openai_api_key"):
-            return "report: no openai api key configured, add one in settings to get reports"
+            return "report: no openai api key configured — add one in Settings"
         model = settings["ai"].get("openai_model", "gpt-4o")
         return _run_openai_compat(db, settings["ai"]["openai_api_key"], None, model)
 
     elif provider == "xai":
         if not settings["ai"].get("xai_api_key"):
-            return "report: no xai api key configured, add one in settings to get reports"
+            return "report: no xai api key configured — add one in Settings"
         model = settings["ai"].get("xai_model", "grok-3")
         return _run_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model)
 
