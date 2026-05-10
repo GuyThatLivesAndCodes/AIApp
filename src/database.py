@@ -223,6 +223,14 @@ class Database:
         with self._connect() as conn:
             return conn.execute(query, params).fetchone()[0]
 
+    def delete_messages(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        with self._connect() as conn:
+            cur = conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+            return cur.rowcount
+
     def get_all_messages(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(

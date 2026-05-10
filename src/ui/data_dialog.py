@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QTabWidget, QWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QLabel, QTextEdit, QListWidget,
-    QListWidgetItem, QPushButton, QHBoxLayout, QSplitter,
+    QListWidgetItem, QPushButton, QHBoxLayout, QSplitter, QMessageBox,
 )
 from PyQt5.QtCore import Qt
 
@@ -36,22 +36,36 @@ class DataDialog(QDialog):
         self._msg_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self._msg_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self._msg_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._msg_table.setSelectionMode(QTableWidget.ExtendedSelection)  # multi-select
         self._msg_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._msg_table.setAlternatingRowColors(True)
         self._msg_table.verticalHeader().setVisible(False)
-        self._msg_table.itemSelectionChanged.connect(self._show_message_detail)
+        self._msg_table.itemSelectionChanged.connect(self._on_msg_selection_changed)
         msg_layout.addWidget(self._msg_table)
 
         self._msg_detail = QTextEdit()
         self._msg_detail.setReadOnly(True)
         self._msg_detail.setObjectName("reportText")
-        self._msg_detail.setMaximumHeight(100)
+        self._msg_detail.setMaximumHeight(90)
         self._msg_detail.setPlaceholderText("Select a message to see full content…")
         msg_layout.addWidget(self._msg_detail)
 
+        # action row: count label + delete button
+        msg_action_row = QHBoxLayout()
         self._msg_count_label = QLabel()
         self._msg_count_label.setStyleSheet("color: #556688; font-size: 11px;")
-        msg_layout.addWidget(self._msg_count_label)
+        msg_action_row.addWidget(self._msg_count_label)
+        msg_action_row.addStretch()
+        self._delete_btn = QPushButton("Delete Selected")
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.setStyleSheet(
+            "QPushButton { background-color: #5a1a1a; border-color: #aa3333; color: #ffaaaa; }"
+            "QPushButton:hover { background-color: #7a2222; border-color: #cc4444; }"
+            "QPushButton:disabled { background-color: #2d2d3f; border-color: #3d3d55; color: #555577; }"
+        )
+        self._delete_btn.clicked.connect(self._delete_selected)
+        msg_action_row.addWidget(self._delete_btn)
+        msg_layout.addLayout(msg_action_row)
 
         tabs.addTab(msg_widget, "Messages")
 
@@ -94,12 +108,14 @@ class DataDialog(QDialog):
         layout.addLayout(btn_bar)
 
     def _load_data(self):
-        # messages
+        self._msg_detail.clear()
         messages = self.db.get_all_messages()
         self._msg_table.setRowCount(0)
         for row_idx, msg in enumerate(messages):
             self._msg_table.insertRow(row_idx)
-            self._msg_table.setItem(row_idx, 0, QTableWidgetItem(str(msg["id"])))
+            id_item = QTableWidgetItem(str(msg["id"]))
+            id_item.setData(Qt.UserRole, msg["id"])   # store int id for deletion
+            self._msg_table.setItem(row_idx, 0, id_item)
             self._msg_table.setItem(row_idx, 1, QTableWidgetItem(msg["sender"]))
             self._msg_table.setItem(row_idx, 2, QTableWidgetItem(msg["date"]))
             preview = msg["content"][:80] + ("…" if len(msg["content"]) > 80 else "")
@@ -108,7 +124,6 @@ class DataDialog(QDialog):
             self._msg_table.setItem(row_idx, 3, item)
         self._msg_count_label.setText(f"{len(messages)} messages stored")
 
-        # reports
         self._rep_list.clear()
         self._reports_data = []
         reports = self.db.get_all_reports()
@@ -118,9 +133,22 @@ class DataDialog(QDialog):
             self._reports_data.append(r["content"])
         self._rep_count_label.setText(f"{len(reports)} reports generated")
 
+    def _on_msg_selection_changed(self):
+        selected_rows = self._msg_table.selectionModel().selectedRows()
+        count = len(selected_rows)
+        self._delete_btn.setEnabled(count > 0)
+        if count == 1:
+            self._delete_btn.setText("Delete Selected  (1)")
+        elif count > 1:
+            self._delete_btn.setText(f"Delete Selected  ({count})")
+        else:
+            self._delete_btn.setText("Delete Selected")
+        self._show_message_detail()
+
     def _show_message_detail(self):
         selected = self._msg_table.selectedItems()
         if not selected:
+            self._msg_detail.clear()
             return
         row = selected[0].row()
         content_item = self._msg_table.item(row, 3)
@@ -129,6 +157,28 @@ class DataDialog(QDialog):
             sender = self._msg_table.item(row, 1).text()
             date = self._msg_table.item(row, 2).text()
             self._msg_detail.setPlainText(f"From: {sender}\nDate: {date}\n\n{full}")
+
+    def _delete_selected(self):
+        selected_rows = self._msg_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        ids = [self._msg_table.item(r.row(), 0).data(Qt.UserRole) for r in selected_rows]
+        n = len(ids)
+        noun = "message" if n == 1 else "messages"
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Messages",
+            f"Permanently delete {n} {noun}? This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.db.delete_messages(ids)
+        self._load_data()
 
     def _show_report_detail(self):
         row = self._rep_list.currentRow()
