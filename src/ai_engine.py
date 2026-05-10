@@ -131,15 +131,54 @@ def _openai_tools():
     ]
 
 
+# ------------------------------------------------------------------ log helpers
+
+def _fmt_args(args: dict) -> str:
+    if not args:
+        return ""
+    parts = []
+    for k, v in args.items():
+        if v is None:
+            continue
+        if isinstance(v, list):
+            parts.append(f"{k}=[{', '.join(str(x) for x in v)}]")
+        else:
+            parts.append(f'{k}="{v}"')
+    return ", ".join(parts)
+
+
+def _fmt_result(result: str) -> str:
+    """Return a short human-readable summary of a tool result."""
+    stripped = result.strip()
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, list):
+                return f"{len(data)} result(s)"
+            if isinstance(data, dict):
+                return "1 result"
+        except Exception:
+            pass
+    if len(stripped) > 80:
+        return stripped[:77] + "…"
+    return stripped
+
+
 # ------------------------------------------------------------------ provider runners
 
-def _run_anthropic(db: Database, settings: dict) -> str:
+def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
     import anthropic
+
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
 
     client = anthropic.Anthropic(api_key=settings["ai"]["anthropic_api_key"])
     model = settings["ai"].get("anthropic_model", "claude-opus-4-7")
     user_msg = _build_context_message(db)
     messages = [{"role": "user", "content": user_msg}]
+
+    log("── scanning messages ──")
 
     for _ in range(15):
         resp = client.messages.create(
@@ -152,6 +191,7 @@ def _run_anthropic(db: Database, settings: dict) -> str:
         if resp.stop_reason == "end_turn":
             for block in resp.content:
                 if hasattr(block, "text"):
+                    log("── writing report ──")
                     return block.text
             return "No report generated."
 
@@ -160,7 +200,9 @@ def _run_anthropic(db: Database, settings: dict) -> str:
             tool_results = []
             for block in resp.content:
                 if block.type == "tool_use":
+                    log(f"→ {block.name}({_fmt_args(block.input)})")
                     result = execute_tool(db, block.name, block.input)
+                    log(f"  ↳ {_fmt_result(result)}")
                     tool_results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": result}
                     )
@@ -171,8 +213,12 @@ def _run_anthropic(db: Database, settings: dict) -> str:
     return "Report generation stopped unexpectedly."
 
 
-def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], model: str) -> str:
+def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], model: str, log_fn=None) -> str:
     from openai import OpenAI
+
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
 
     kwargs = {"api_key": api_key or "not-needed"}
     if base_url:
@@ -186,6 +232,8 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
     ]
     tools = _openai_tools()
 
+    log("── scanning messages ──")
+
     for _ in range(15):
         resp = client.chat.completions.create(
             model=model,
@@ -196,13 +244,16 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
         choice = resp.choices[0]
 
         if choice.finish_reason == "stop":
+            log("── writing report ──")
             return choice.message.content or "No report generated."
 
         if choice.finish_reason == "tool_calls":
             messages.append(choice.message)
             for tc in choice.message.tool_calls:
                 args = json.loads(tc.function.arguments)
+                log(f"→ {tc.function.name}({_fmt_args(args)})")
                 result = execute_tool(db, tc.function.name, args)
+                log(f"  ↳ {_fmt_result(result)}")
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result}
                 )
@@ -234,39 +285,39 @@ def _detect_local_model(host: str, port: int, provider: str) -> str:
 
 # ------------------------------------------------------------------ public entry point
 
-def generate_report(db: Database, settings: dict) -> str:
+def generate_report(db: Database, settings: dict, log_fn=None) -> str:
     provider = settings["ai"].get("provider", "anthropic")
 
     if provider == "anthropic":
         if not settings["ai"].get("anthropic_api_key"):
-            return "report: no anthropic api key configured — add one in Settings"
-        return _run_anthropic(db, settings)
+            return "no anthropic api key configured — add one in Settings"
+        return _run_anthropic(db, settings, log_fn=log_fn)
 
     elif provider == "openai":
         if not settings["ai"].get("openai_api_key"):
-            return "report: no openai api key configured — add one in Settings"
+            return "no openai api key configured — add one in Settings"
         model = settings["ai"].get("openai_model", "gpt-4o")
-        return _run_openai_compat(db, settings["ai"]["openai_api_key"], None, model)
+        return _run_openai_compat(db, settings["ai"]["openai_api_key"], None, model, log_fn=log_fn)
 
     elif provider == "xai":
         if not settings["ai"].get("xai_api_key"):
-            return "report: no xai api key configured — add one in Settings"
+            return "no xai api key configured — add one in Settings"
         model = settings["ai"].get("xai_model", "grok-3")
-        return _run_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model)
+        return _run_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, log_fn=log_fn)
 
     elif provider == "ollama":
         host = settings["ai"].get("ollama_host", "localhost")
         port = settings["ai"].get("ollama_port", 11434)
         model = settings["ai"].get("ollama_model") or _detect_local_model(host, port, "ollama")
-        return _run_openai_compat(db, "ollama", f"http://{host}:{port}/v1", model)
+        return _run_openai_compat(db, "ollama", f"http://{host}:{port}/v1", model, log_fn=log_fn)
 
     elif provider == "lm_studio":
         host = settings["ai"].get("lm_studio_host", "localhost")
         port = settings["ai"].get("lm_studio_port", 1234)
         model = settings["ai"].get("lm_studio_model") or _detect_local_model(host, port, "lm_studio")
-        return _run_openai_compat(db, "lm-studio", f"http://{host}:{port}/v1", model)
+        return _run_openai_compat(db, "lm-studio", f"http://{host}:{port}/v1", model, log_fn=log_fn)
 
-    return "report: unknown provider selected"
+    return "unknown provider selected"
 
 
 # ------------------------------------------------------------------ async worker
@@ -274,6 +325,7 @@ def generate_report(db: Database, settings: dict) -> str:
 class ReportWorker(QObject):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
+    log_update = pyqtSignal(str)   # emitted for each tool call / status line
 
     def __init__(self, db: Database, settings: dict):
         super().__init__()
@@ -282,7 +334,7 @@ class ReportWorker(QObject):
 
     def run(self):
         try:
-            report = generate_report(self._db, self._settings)
+            report = generate_report(self._db, self._settings, log_fn=self.log_update.emit)
             self.finished.emit(report)
         except Exception as e:
             self.error.emit(str(e))

@@ -32,6 +32,7 @@ class MainWindow(QMainWindow):
         self._report_thread: QThread | None = None
         self._generating = False
         self._latest_report = ""
+        self._log_lines: list[str] = []
 
         self._bring_to_front.connect(self._show_window)
         self._build_ui()
@@ -277,10 +278,17 @@ class MainWindow(QMainWindow):
         self._seconds_left = interval
         self._update_timer_display()
 
+        # Open the report panel and show a live log
+        if not self._report_area.isVisible():
+            self._toggle_report()
+        self._report_text.setPlainText("")
+        self._log_lines = []
+
         worker = ReportWorker(self.db, self.settings)
         self._report_thread = QThread()
         worker.moveToThread(self._report_thread)
         self._report_thread.started.connect(worker.run)
+        worker.log_update.connect(self._on_log_line)
         worker.finished.connect(self._on_report_done)
         worker.error.connect(self._on_report_error)
         worker.finished.connect(self._report_thread.quit)
@@ -288,10 +296,22 @@ class MainWindow(QMainWindow):
         self._report_thread.start()
         self._worker_ref = worker  # prevent GC
 
+    def _on_log_line(self, line: str):
+        self._log_lines.append(line)
+        self._report_text.setPlainText("\n".join(self._log_lines))
+        # Scroll to bottom so newest line is visible
+        sb = self._report_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
     def _on_report_done(self, report: str):
         self._latest_report = report
         self.db.add_report(report)
-        self._report_text.setPlainText(report)
+        # Append separator + final report below the tool log
+        separator = "─" * 40
+        full_text = "\n".join(self._log_lines) + f"\n\n{separator}\n\n{report}"
+        self._report_text.setPlainText(full_text)
+        sb = self._report_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
         self._generating = False
         self._report_now_btn.setEnabled(True)
         self._report_now_btn.setText("Report Now")
