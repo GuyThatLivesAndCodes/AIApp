@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTextEdit, QFrame, QMenu, QAction, QSizePolicy,
     QSpacerItem,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
 from PyQt5.QtGui import QFont
 
 from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX
@@ -296,24 +296,29 @@ class MainWindow(QMainWindow):
         self._log_lines = []
 
         worker = ReportWorker(self.db, self.settings)
-        self._report_thread = QThread()
-        worker.moveToThread(self._report_thread)
-        self._report_thread.started.connect(worker.run)
-        worker.log_update.connect(self._on_log_line)
-        worker.finished.connect(self._on_report_done)
-        worker.error.connect(self._on_report_error)
-        worker.finished.connect(self._report_thread.quit)
-        worker.error.connect(self._report_thread.quit)
-        self._report_thread.start()
-        self._worker_ref = worker  # prevent GC
+        thread = QThread()                          # no parent — deleteLater handles cleanup
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        worker.log_update.connect(self._on_log_line,    Qt.QueuedConnection)
+        worker.finished.connect(self._on_report_done,   Qt.QueuedConnection)
+        worker.error.connect(self._on_report_error,     Qt.QueuedConnection)
+        self._report_thread = thread
+        self._worker_ref = worker                   # keep Python ref alive until deleteLater fires
+        thread.start()
 
+    @pyqtSlot(str)
     def _on_log_line(self, line: str):
         self._log_lines.append(line)
         self._report_text.setPlainText("\n".join(self._log_lines))
-        # Scroll to bottom so newest line is visible
         sb = self._report_text.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    @pyqtSlot(str)
     def _on_report_done(self, report: str):
         self._latest_report = report
         self.db.add_report(report)
@@ -332,6 +337,7 @@ class MainWindow(QMainWindow):
         if self.settings["notifications"].get("enabled", True):
             notify_report_ready(on_click=lambda: self._bring_to_front.emit())
 
+    @pyqtSlot(str)
     def _on_report_error(self, error: str):
         self._report_text.setPlainText(f"Error generating report:\n{error}")
         self._generating = False

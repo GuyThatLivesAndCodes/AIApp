@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QTextEdit, QLineEdit, QFrame, QInputDialog, QMessageBox,
 )
-from PyQt5.QtCore import QThread
+from PyQt5.QtCore import QThread, Qt, pyqtSlot
 
 from database import Database
 from ai_engine import ChatTurnWorker
@@ -20,17 +20,17 @@ class ChatDialog(QDialog):
         self.settings = settings
         self._report_text = report_text
         self._generating = False
-        self._thread: QThread | None = None
-        self._worker = None
-        self._last_user_msg = ""   # always initialised before use
+        self._last_user_msg = ""
 
-        # History must start with a user turn — Anthropic requires it.
-        # The synthetic opening turn gives the AI context that it already
-        # generated the report; subsequent turns flow naturally from there.
+        # History must start with a user turn — Anthropic rejects assistant-first.
         self._history: list[dict] = [
             {"role": "user",      "content": "give me a report on the latest messages"},
             {"role": "assistant", "content": report_text},
         ]
+
+        # Held to prevent premature GC; replaced each turn
+        self._thread: QThread | None = None
+        self._worker: ChatTurnWorker | None = None
 
         self.setWindowTitle("Chat")
         self.setMinimumSize(680, 540)
@@ -75,7 +75,7 @@ class ChatDialog(QDialog):
         root.addLayout(input_row)
 
         bottom = QFrame()
-        bottom.setStyleSheet("background-color: #050505; border-top: 1px solid #111111;")
+        bottom.setStyleSheet("background-color:#050505;border-top:1px solid #111111;")
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(12, 6, 12, 6)
 
@@ -114,63 +114,85 @@ class ChatDialog(QDialog):
         self._last_user_msg = text
         self._input.clear()
         self._append_user(text)
+        self._display.appendPlainText("\nAI:")
 
         self._generating = True
         self._send_btn.setEnabled(False)
         self._input.setEnabled(False)
 
-        # Wait for any previous thread to finish before starting a new one
-        if self._thread is not None and self._thread.isRunning():
-            self._thread.wait(3000)
-
+        # ---- Canonical PyQt5 worker pattern --------------------------------
+        # No parent on either object — deleteLater handles C++ lifetime.
+        # Explicit QueuedConnection ensures slots run on the main-thread
+        # event loop regardless of when moveToThread was called.
         worker = ChatTurnWorker(self.db, self.settings, list(self._history), text)
-        thread = QThread(self)
+        thread = QThread()                       # ← no parent
+
         worker.moveToThread(thread)
+
+        # Wire up work and cleanup
         thread.started.connect(worker.run)
-        worker.log_update.connect(self._on_log)
-        worker.finished.connect(self._on_ai_done)
-        worker.error.connect(self._on_ai_error)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)   # C++ cleanup after thread stops
+        worker.error.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)   # C++ cleanup
+
+        # Cross-thread UI updates — always queued so they land on main thread
+        worker.log_update.connect(self._on_log,     Qt.QueuedConnection)
+        worker.finished.connect(self._on_ai_done,   Qt.QueuedConnection)
+        worker.error.connect(self._on_ai_error,     Qt.QueuedConnection)
+
+        # Keep strong Python references so GC doesn't collect wrappers
+        # before Qt has finished with the underlying C++ objects.
+        self._thread = thread
+        self._worker = worker
+
         thread.start()
 
-        self._thread = thread
-        self._worker = worker   # keep reference so GC doesn't collect it
-
-        self._display.appendPlainText("\nAI:")
-
     # ------------------------------------------------------------------ slots
+    # @pyqtSlot ensures Qt's meta-object system routes signals correctly.
 
+    @pyqtSlot(str)
     def _on_log(self, line: str):
-        self._display.appendPlainText(line)
-        self._scroll_to_bottom()
+        try:
+            self._display.appendPlainText(line)
+            self._scroll_to_bottom()
+        except RuntimeError:
+            pass   # widget already destroyed (dialog closed mid-turn)
 
+    @pyqtSlot(str)
     def _on_ai_done(self, response: str):
-        # Persist the completed turn into history for future context
-        self._history.append({"role": "user",      "content": self._last_user_msg})
-        self._history.append({"role": "assistant", "content": response})
+        try:
+            self._history.append({"role": "user",      "content": self._last_user_msg})
+            self._history.append({"role": "assistant", "content": response})
 
-        self._display.appendPlainText(_SEP_THIN)
-        self._display.appendPlainText("")
-        self._display.appendPlainText(response)
-        self._display.appendPlainText("")
-        self._display.appendPlainText(_SEP_THICK)
-        self._scroll_to_bottom()
+            self._display.appendPlainText(_SEP_THIN)
+            self._display.appendPlainText("")
+            self._display.appendPlainText(response)
+            self._display.appendPlainText("")
+            self._display.appendPlainText(_SEP_THICK)
+            self._scroll_to_bottom()
 
-        self._generating = False
-        self._send_btn.setEnabled(True)
-        self._input.setEnabled(True)
-        self._input.setFocus()
+            self._generating = False
+            self._send_btn.setEnabled(True)
+            self._input.setEnabled(True)
+            self._input.setFocus()
+        except RuntimeError:
+            pass
 
+    @pyqtSlot(str)
     def _on_ai_error(self, error: str):
-        self._display.appendPlainText(_SEP_THIN)
-        self._display.appendPlainText(f"[error: {error}]")
-        self._display.appendPlainText(_SEP_THICK)
-        self._scroll_to_bottom()
+        try:
+            self._display.appendPlainText(_SEP_THIN)
+            self._display.appendPlainText(f"[error: {error}]")
+            self._display.appendPlainText(_SEP_THICK)
+            self._scroll_to_bottom()
 
-        self._generating = False
-        self._send_btn.setEnabled(True)
-        self._input.setEnabled(True)
+            self._generating = False
+            self._send_btn.setEnabled(True)
+            self._input.setEnabled(True)
+        except RuntimeError:
+            pass
 
     # ------------------------------------------------------------------ helpers
 
@@ -181,8 +203,11 @@ class ChatDialog(QDialog):
         self._scroll_to_bottom()
 
     def _scroll_to_bottom(self):
-        sb = self._display.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        try:
+            sb = self._display.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except RuntimeError:
+            pass
 
     # ------------------------------------------------------------------ save / delete
 
@@ -207,8 +232,11 @@ class ChatDialog(QDialog):
             self.reject()
 
     def closeEvent(self, event):
-        # Stop any running thread cleanly before the dialog is destroyed
-        if self._thread and self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(2000)
+        if self._thread is not None:
+            try:
+                if self._thread.isRunning():
+                    self._thread.quit()
+                    self._thread.wait(2000)
+            except RuntimeError:
+                pass
         event.accept()
