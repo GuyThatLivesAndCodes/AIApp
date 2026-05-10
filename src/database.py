@@ -83,6 +83,13 @@ class Database:
                     content      TEXT NOT NULL,
                     generated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
+
+                CREATE TABLE IF NOT EXISTS chats (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title      TEXT NOT NULL,
+                    transcript TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
             """)
             # Migration: add date_ts to databases created before this column existed
             try:
@@ -254,6 +261,30 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM reports ORDER BY id DESC").fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ chats
+
+    def save_chat(self, title: str, transcript: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO chats (title, transcript) VALUES (?, ?)",
+                (title, transcript),
+            )
+            return cur.lastrowid
+
+    def get_all_chats(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM chats ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_chat(self, chat_id: int) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_chat(self, chat_id: int):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
 
 
 # ------------------------------------------------------------------ settings

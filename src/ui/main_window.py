@@ -19,6 +19,7 @@ from ui.settings_dialog import SettingsDialog
 from ui.server_settings_dialog import ServerSettingsDialog
 from ui.data_dialog import DataDialog
 from ui.connect_dialog import ConnectDialog
+from ui.chat_dialog import ChatDialog
 
 
 class MainWindow(QMainWindow):
@@ -115,6 +116,16 @@ class MainWindow(QMainWindow):
         self._report_text.setMinimumHeight(100)
         self._report_text.setMaximumHeight(180)
         report_area_layout.addWidget(self._report_text)
+
+        chat_row = QHBoxLayout()
+        chat_row.addStretch()
+        self._chat_btn = QPushButton("Start Chat")
+        self._chat_btn.setObjectName("chatBtn")
+        self._chat_btn.setEnabled(False)
+        self._chat_btn.clicked.connect(self._open_chat)
+        chat_row.addWidget(self._chat_btn)
+        report_area_layout.addLayout(chat_row)
+
         self._report_area.hide()
         content_layout.addWidget(self._report_area)
 
@@ -315,6 +326,7 @@ class MainWindow(QMainWindow):
         self._generating = False
         self._report_now_btn.setEnabled(True)
         self._report_now_btn.setText("Report Now")
+        self._chat_btn.setEnabled(True)
         self._status_label.setText(f"Report generated at {datetime.now().strftime('%H:%M:%S')}")
 
         if self.settings["notifications"].get("enabled", True):
@@ -338,6 +350,12 @@ class MainWindow(QMainWindow):
             self._toggle_btn.setText("▼  Close Report")
 
     # ------------------------------------------------------------------ dialogs
+
+    def _open_chat(self):
+        if not self._latest_report:
+            return
+        dlg = ChatDialog(self.db, self.settings, self._latest_report, self)
+        dlg.show()
 
     def _open_connect_help(self):
         dlg = ConnectDialog(self.settings["server"]["port"], self)

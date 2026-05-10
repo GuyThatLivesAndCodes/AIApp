@@ -4,6 +4,13 @@ from typing import Optional
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from config import SYSTEM_PROMPT, TOOL_DEFINITIONS
+
+CHAT_SYSTEM_PROMPT = (
+    SYSTEM_PROMPT
+    + "\n\nYou are now in a back-and-forth conversation with the user. "
+    "Answer their questions directly and casually. Use your tools to look up "
+    "specific messages or details whenever needed. Same tone — casual, like a friend, all lowercase."
+)
 from database import Database
 
 
@@ -320,6 +327,130 @@ def generate_report(db: Database, settings: dict, log_fn=None) -> str:
     return "unknown provider selected"
 
 
+# ------------------------------------------------------------------ chat turn runners
+
+def _chat_anthropic(db: Database, settings: dict, history: list, user_message: str, log_fn=None) -> str:
+    import anthropic
+
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    client = anthropic.Anthropic(api_key=settings["ai"]["anthropic_api_key"])
+    model = settings["ai"].get("anthropic_model", "claude-opus-4-7")
+
+    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": user_message})
+
+    log("── thinking ──")
+
+    for _ in range(15):
+        resp = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            system=CHAT_SYSTEM_PROMPT,
+            tools=_anthropic_tools(),
+            messages=messages,
+        )
+        if resp.stop_reason == "end_turn":
+            for block in resp.content:
+                if hasattr(block, "text"):
+                    log("── done ──")
+                    return block.text
+            return ""
+
+        if resp.stop_reason == "tool_use":
+            messages.append({"role": "assistant", "content": resp.content})
+            tool_results = []
+            for block in resp.content:
+                if block.type == "tool_use":
+                    log(f"→ {block.name}({_fmt_args(block.input)})")
+                    result = execute_tool(db, block.name, block.input)
+                    log(f"  ↳ {_fmt_result(result)}")
+                    tool_results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": result}
+                    )
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            break
+
+    return "..."
+
+
+def _chat_openai_compat(
+    db: Database, api_key: str, base_url: Optional[str], model: str,
+    history: list, user_message: str, log_fn=None
+) -> str:
+    from openai import OpenAI
+
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    kwargs = {"api_key": api_key or "not-needed"}
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    client = OpenAI(**kwargs)
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    messages += [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": user_message})
+
+    log("── thinking ──")
+
+    for _ in range(15):
+        resp = client.chat.completions.create(
+            model=model, messages=messages, tools=_openai_tools(), tool_choice="auto"
+        )
+        choice = resp.choices[0]
+
+        if choice.finish_reason == "stop":
+            log("── done ──")
+            return choice.message.content or ""
+
+        if choice.finish_reason == "tool_calls":
+            messages.append(choice.message)
+            for tc in choice.message.tool_calls:
+                args = json.loads(tc.function.arguments)
+                log(f"→ {tc.function.name}({_fmt_args(args)})")
+                result = execute_tool(db, tc.function.name, args)
+                log(f"  ↳ {_fmt_result(result)}")
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": result}
+                )
+        else:
+            break
+
+    return "..."
+
+
+def run_chat_turn(
+    db: Database, settings: dict, history: list, user_message: str, log_fn=None
+) -> str:
+    provider = settings["ai"].get("provider", "anthropic")
+
+    if provider == "anthropic":
+        return _chat_anthropic(db, settings, history, user_message, log_fn)
+    elif provider == "openai":
+        model = settings["ai"].get("openai_model", "gpt-4o")
+        return _chat_openai_compat(db, settings["ai"]["openai_api_key"], None, model, history, user_message, log_fn)
+    elif provider == "xai":
+        model = settings["ai"].get("xai_model", "grok-3")
+        return _chat_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, history, user_message, log_fn)
+    elif provider == "ollama":
+        host = settings["ai"].get("ollama_host", "localhost")
+        port = settings["ai"].get("ollama_port", 11434)
+        model = settings["ai"].get("ollama_model") or _detect_local_model(host, port, "ollama")
+        return _chat_openai_compat(db, "ollama", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
+    elif provider == "lm_studio":
+        host = settings["ai"].get("lm_studio_host", "localhost")
+        port = settings["ai"].get("lm_studio_port", 1234)
+        model = settings["ai"].get("lm_studio_model") or _detect_local_model(host, port, "lm_studio")
+        return _chat_openai_compat(db, "lm-studio", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
+
+    return "unknown provider"
+
+
 # ------------------------------------------------------------------ async worker
 
 class ReportWorker(QObject):
@@ -336,5 +467,28 @@ class ReportWorker(QObject):
         try:
             report = generate_report(self._db, self._settings, log_fn=self.log_update.emit)
             self.finished.emit(report)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ChatTurnWorker(QObject):
+    finished = pyqtSignal(str)
+    log_update = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, db: Database, settings: dict, history: list, user_message: str):
+        super().__init__()
+        self._db = db
+        self._settings = settings
+        self._history = history
+        self._user_message = user_message
+
+    def run(self):
+        try:
+            response = run_chat_turn(
+                self._db, self._settings, self._history,
+                self._user_message, log_fn=self.log_update.emit
+            )
+            self.finished.emit(response)
         except Exception as e:
             self.error.emit(str(e))

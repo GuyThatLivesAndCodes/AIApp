@@ -7,6 +7,12 @@ from PyQt5.QtCore import Qt
 
 from database import Database
 
+_DELETE_STYLE = (
+    "QPushButton{background:#0d0d0d;border:1px solid #2a2a2a;color:#555555;}"
+    "QPushButton:hover{background:#1c0000;border-color:#660000;color:#ff6666;}"
+    "QPushButton:disabled{background:#0d0d0d;border-color:#1a1a1a;color:#222222;}"
+)
+
 
 class DataDialog(QDialog):
     def __init__(self, db: Database, parent=None):
@@ -58,11 +64,7 @@ class DataDialog(QDialog):
         msg_action_row.addStretch()
         self._delete_btn = QPushButton("Delete Selected")
         self._delete_btn.setEnabled(False)
-        self._delete_btn.setStyleSheet(
-            "QPushButton { background-color: #5a1a1a; border-color: #aa3333; color: #ffaaaa; }"
-            "QPushButton:hover { background-color: #7a2222; border-color: #cc4444; }"
-            "QPushButton:disabled { background-color: #2d2d3f; border-color: #3d3d55; color: #555577; }"
-        )
+        self._delete_btn.setStyleSheet(_DELETE_STYLE)
         self._delete_btn.clicked.connect(self._delete_selected)
         msg_action_row.addWidget(self._delete_btn)
         msg_layout.addLayout(msg_action_row)
@@ -95,6 +97,40 @@ class DataDialog(QDialog):
         rep_layout.addWidget(self._rep_count_label)
 
         tabs.addTab(rep_widget, "Reports")
+
+        # ---- Chats tab ----
+        chat_widget = QWidget()
+        chat_layout = QVBoxLayout(chat_widget)
+        chat_layout.setContentsMargins(0, 8, 0, 0)
+
+        chat_splitter = QSplitter(Qt.Horizontal)
+
+        self._chat_list = QListWidget()
+        self._chat_list.setMaximumWidth(260)
+        self._chat_list.itemSelectionChanged.connect(self._show_chat_detail)
+        chat_splitter.addWidget(self._chat_list)
+
+        self._chat_detail = QTextEdit()
+        self._chat_detail.setReadOnly(True)
+        self._chat_detail.setObjectName("chatDisplay")
+        self._chat_detail.setPlaceholderText("Select a saved chat to read it…")
+        chat_splitter.addWidget(self._chat_detail)
+        chat_splitter.setStretchFactor(1, 3)
+        chat_layout.addWidget(chat_splitter)
+
+        chat_action_row = QHBoxLayout()
+        self._chat_count_label = QLabel()
+        self._chat_count_label.setStyleSheet("color: #333333; font-size: 11px;")
+        chat_action_row.addWidget(self._chat_count_label)
+        chat_action_row.addStretch()
+        self._delete_chat_btn = QPushButton("Delete Chat")
+        self._delete_chat_btn.setEnabled(False)
+        self._delete_chat_btn.setStyleSheet(_DELETE_STYLE)
+        self._delete_chat_btn.clicked.connect(self._delete_selected_chat)
+        chat_action_row.addWidget(self._delete_chat_btn)
+        chat_layout.addLayout(chat_action_row)
+
+        tabs.addTab(chat_widget, "Chats")
 
         # ---- Refresh / close buttons ----
         btn_bar = QHBoxLayout()
@@ -132,6 +168,37 @@ class DataDialog(QDialog):
             self._rep_list.addItem(item)
             self._reports_data.append(r["content"])
         self._rep_count_label.setText(f"{len(reports)} reports generated")
+
+        # chats
+        self._chat_list.clear()
+        self._chats_data: list[dict] = self.db.get_all_chats()
+        for c in self._chats_data:
+            self._chat_list.addItem(f"{c['title']}  [{c['created_at'][:16]}]")
+        self._chat_count_label.setText(f"{len(self._chats_data)} saved chats")
+        self._delete_chat_btn.setEnabled(False)
+
+    def _show_chat_detail(self):
+        row = self._chat_list.currentRow()
+        if 0 <= row < len(self._chats_data):
+            self._chat_detail.setPlainText(self._chats_data[row]["transcript"])
+            self._delete_chat_btn.setEnabled(True)
+        else:
+            self._delete_chat_btn.setEnabled(False)
+
+    def _delete_selected_chat(self):
+        row = self._chat_list.currentRow()
+        if not (0 <= row < len(self._chats_data)):
+            return
+        chat = self._chats_data[row]
+        reply = QMessageBox.question(
+            self, "Delete Chat",
+            f"Permanently delete \"{chat['title']}\"?",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        if reply == QMessageBox.Yes:
+            self.db.delete_chat(chat["id"])
+            self._chat_detail.clear()
+            self._load_data()
 
     def _on_msg_selection_changed(self):
         selected_rows = self._msg_table.selectionModel().selectedRows()
