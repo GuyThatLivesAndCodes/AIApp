@@ -11,15 +11,35 @@ from config import DATA_DIR, DB_PATH, SETTINGS_PATH, DEFAULT_SETTINGS
 # ------------------------------------------------------------------ date parsing
 
 _DATE_FORMATS = [
+    # 4-digit year  ── most common (messages arrive in this format)
     "%m/%d/%Y %I:%M %p",   # 05/09/2026 05:19 PM
-    "%m/%d/%Y %I:%M%p",    # 05/09/2026 05:19PM  (no space)
+    "%m/%d/%Y %I:%M%p",    # 05/09/2026 05:19PM
     "%m/%d/%Y %H:%M:%S",   # 05/09/2026 17:19:00
     "%m/%d/%Y %H:%M",      # 05/09/2026 17:19
     "%m/%d/%Y",            # 05/09/2026
-    "%Y-%m-%dT%H:%M:%S",   # ISO
-    "%Y-%m-%d %H:%M:%S",   # ISO with space
-    "%Y-%m-%d",            # ISO date only
+    # 2-digit year  ── AI tool calls often abbreviate (e.g. 4/1/26)
+    "%m/%d/%y %I:%M %p",   # 4/1/26 05:19 PM
+    "%m/%d/%y %I:%M%p",    # 4/1/26 05:19PM
+    "%m/%d/%y %H:%M:%S",   # 4/1/26 17:19:00
+    "%m/%d/%y %H:%M",      # 4/1/26 17:19
+    "%m/%d/%y",            # 4/1/26
+    # ISO
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
 ]
+
+
+def _normalise_date_str(date_str: str) -> str:
+    """Expand a 2-digit year in M/D/YY… to M/D/YYYY… so LIKE comparisons work
+    against stored dates that always have 4-digit years."""
+    s = date_str.strip()
+    m = re.match(r"^(\d{1,2}/\d{1,2}/)(\d{2})\b", s)
+    if m:
+        yy = int(m.group(2))
+        yyyy = 2000 + yy if yy < 70 else 1900 + yy
+        s = s[: m.start(2)] + str(yyyy) + s[m.end(2) :]
+    return s
 
 
 def parse_date_to_iso(date_str: str) -> Optional[str]:
@@ -146,21 +166,24 @@ class Database:
 
         if start_date:
             iso = _iso_start_of_day(start_date)
+            # Normalise for LIKE: expand 2-digit year so "4/1/26" → "4/1/2026"
+            like_prefix = _normalise_date_str(start_date).split()[0] + "%"
             if iso:
                 clauses += " AND (date_ts >= ? OR (date_ts IS NULL AND date LIKE ?))"
-                params.extend([iso, f"{start_date.split()[0]}%"])
+                params.extend([iso, like_prefix])
             else:
                 clauses += " AND date LIKE ?"
-                params.append(f"{start_date}%")
+                params.append(like_prefix)
 
         if end_date:
             iso = _iso_end_of_day(end_date)
+            like_prefix = _normalise_date_str(end_date).split()[0] + "%"
             if iso:
                 clauses += " AND (date_ts <= ? OR (date_ts IS NULL AND date LIKE ?))"
-                params.extend([iso, f"{end_date.split()[0]}%"])
+                params.extend([iso, like_prefix])
             else:
                 clauses += " AND date LIKE ?"
-                params.append(f"{end_date}%")
+                params.append(like_prefix)
 
         return clauses, params
 

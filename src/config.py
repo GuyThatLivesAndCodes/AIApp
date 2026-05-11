@@ -70,8 +70,8 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "sender": {"type": "string", "description": "Filter by sender name (optional)"},
                 "conversation": {"type": "string", "description": "Filter by conversation name, e.g. 'Liam Smith' or 'The Family' (optional)"},
-                "start_date": {"type": "string", "description": "Start date filter e.g. '5/9/2026' (optional)"},
-                "end_date": {"type": "string", "description": "End date filter e.g. '5/10/2026' (optional)"},
+                "start_date": {"type": "string", "description": "Start date filter — any common format works: '5/9/2026', '5/9/26', '2026-05-09' (optional)"},
+                "end_date": {"type": "string", "description": "End date filter — any common format works: '5/10/2026', '5/10/26', '2026-05-10' (optional)"},
                 "keywords": {"type": "string", "description": "Keywords to search in message content (optional)"},
             },
         },
@@ -104,8 +104,8 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "sender": {"type": "string", "description": "Filter by sender (optional)"},
-                "start_date": {"type": "string", "description": "Start date (optional)"},
-                "end_date": {"type": "string", "description": "End date (optional)"},
+                "start_date": {"type": "string", "description": "Start date, any common format: '5/9/2026', '5/9/26', '2026-05-09' (optional)"},
+                "end_date": {"type": "string", "description": "End date, any common format: '5/10/2026', '5/10/26', '2026-05-10' (optional)"},
             },
         },
     },
