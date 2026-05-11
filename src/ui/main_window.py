@@ -1,13 +1,11 @@
 import random
-import threading
 from datetime import datetime, timedelta
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame, QMenu, QAction, QSizePolicy,
-    QSpacerItem,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QFont
 
 from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX, APP_VERSION
@@ -20,6 +18,7 @@ from ui.server_settings_dialog import ServerSettingsDialog
 from ui.data_dialog import DataDialog
 from ui.connect_dialog import ConnectDialog
 from ui.chat_dialog import ChatDialog
+from ui.context_dialog import ContextDialog
 
 
 class MainWindow(QMainWindow):
@@ -44,8 +43,8 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         self.setWindowTitle("AIApp — Relationship & Life Monitor")
-        self.setMinimumSize(560, 460)
-        self.resize(620, 520)
+        self.setMinimumSize(780, 480)
+        self.resize(900, 540)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -55,32 +54,40 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self._make_top_bar())
 
-        # ---- Content area ----
+        # ---- Content area: context panel (left) + timer/report (right) ----
         content = QWidget()
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(32, 24, 32, 16)
-        content_layout.setSpacing(0)
+        content_hbox = QHBoxLayout(content)
+        content_hbox.setContentsMargins(0, 0, 0, 0)
+        content_hbox.setSpacing(0)
 
-        # timer section
-        content_layout.addStretch(1)
+        content_hbox.addWidget(self._make_context_panel())
+
+        right = QWidget()
+        right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(32, 24, 32, 16)
+        right_layout.setSpacing(0)
+
+        # Timer section
+        right_layout.addStretch(1)
 
         self._timer_hint = QLabel("NEXT REPORT IN")
         self._timer_hint.setObjectName("sectionLabel")
         self._timer_hint.setAlignment(Qt.AlignCenter)
-        content_layout.addWidget(self._timer_hint)
+        right_layout.addWidget(self._timer_hint)
 
         self._timer_label = QLabel("02:00:00")
         self._timer_label.setObjectName("timerLabel")
         self._timer_label.setAlignment(Qt.AlignCenter)
-        content_layout.addWidget(self._timer_label)
+        right_layout.addWidget(self._timer_label)
 
         self._next_label = QLabel("")
         self._next_label.setObjectName("nextLabel")
         self._next_label.setAlignment(Qt.AlignCenter)
-        content_layout.addWidget(self._next_label)
+        right_layout.addWidget(self._next_label)
 
-        content_layout.addSpacing(20)
+        right_layout.addSpacing(20)
 
         self._report_now_btn = QPushButton("Report Now")
         self._report_now_btn.setObjectName("reportNowBtn")
@@ -91,16 +98,16 @@ class MainWindow(QMainWindow):
         btn_row.addStretch()
         btn_row.addWidget(self._report_now_btn)
         btn_row.addStretch()
-        content_layout.addLayout(btn_row)
+        right_layout.addLayout(btn_row)
 
-        content_layout.addStretch(1)
+        right_layout.addStretch(1)
 
-        # report toggle
+        # Report toggle
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
         divider.setStyleSheet("color: #181818;")
-        content_layout.addWidget(divider)
-        content_layout.addSpacing(6)
+        right_layout.addWidget(divider)
+        right_layout.addSpacing(6)
 
         toggle_row = QHBoxLayout()
         self._toggle_btn = QPushButton("▶  Open Report")
@@ -109,7 +116,7 @@ class MainWindow(QMainWindow):
         self._toggle_btn.clicked.connect(self._toggle_report)
         toggle_row.addWidget(self._toggle_btn)
         toggle_row.addStretch()
-        content_layout.addLayout(toggle_row)
+        right_layout.addLayout(toggle_row)
 
         self._report_area = QWidget()
         report_area_layout = QVBoxLayout(self._report_area)
@@ -132,12 +139,12 @@ class MainWindow(QMainWindow):
         report_area_layout.addLayout(chat_row)
 
         self._report_area.hide()
-        content_layout.addWidget(self._report_area)
+        right_layout.addWidget(self._report_area)
 
+        content_hbox.addWidget(right, stretch=1)
         root.addWidget(content, stretch=1)
         root.addWidget(self._make_bottom_bar())
 
-        # status bar
         self._status_label = QLabel("Server not running")
         self._status_label.setObjectName("statusLabel")
         self.statusBar().addWidget(self._status_label)
@@ -150,18 +157,16 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(8)
 
-        # Serve button
         self._serve_btn = QPushButton("○  Serve  ▾")
         self._serve_btn.setObjectName("serveBtn")
         self._serve_btn.setProperty("serverRunning", "false")
         self._serve_btn.setFixedHeight(34)
-        self._serve_btn.setMinimumWidth(100)
+        self._serve_btn.setMinimumWidth(120)
         self._serve_btn.clicked.connect(self._show_serve_menu)
         layout.addWidget(self._serve_btn)
 
         layout.addStretch()
 
-        # Data button
         data_btn = QPushButton("Data")
         data_btn.setObjectName("dataBtn")
         data_btn.setFixedHeight(34)
@@ -190,6 +195,78 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_btn)
 
         return bar
+
+    # ------------------------------------------------------------------ context panel
+
+    def _make_context_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("contextPanel")
+        panel.setFixedWidth(210)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 20, 14, 14)
+        layout.setSpacing(6)
+
+        header = QLabel("YOUR CONTEXT")
+        header.setObjectName("sectionLabel")
+        layout.addWidget(header)
+
+        layout.addSpacing(6)
+
+        self._context_display = QTextEdit()
+        self._context_display.setObjectName("contextDisplay")
+        self._context_display.setReadOnly(True)
+        layout.addWidget(self._context_display, stretch=1)
+
+        edit_btn = QPushButton("Edit Context")
+        edit_btn.setObjectName("editContextBtn")
+        edit_btn.clicked.connect(self._open_context_editor)
+        layout.addWidget(edit_btn)
+
+        self._refresh_context_display()
+        return panel
+
+    def _refresh_context_display(self):
+        user = self.settings.get("user", {})
+        name = user.get("name", "").strip()
+        ctx = user.get("context", {})
+        friends = ctx.get("friends", [])
+        family  = ctx.get("family",  [])
+        crushes = ctx.get("crushes", [])
+        custom  = ctx.get("custom",  "").strip()
+
+        lines = []
+        if name:
+            lines.append(f"// {name}")
+            lines.append("")
+
+        for label, names in [("friends", friends), ("family", family), ("crushes", crushes)]:
+            if names:
+                lines.append(label)
+                for n in names:
+                    lines.append(f"  {n}")
+                lines.append("")
+
+        if custom:
+            if lines:
+                lines.append("─" * 18)
+            preview = custom[:220]
+            if len(custom) > 220:
+                preview += "…"
+            lines.append(preview)
+
+        if not lines:
+            lines = [
+                "nothing set yet.",
+                "",
+                "click Edit Context",
+                "to add info about",
+                "yourself and your",
+                "relationships.",
+            ]
+
+        self._context_display.setPlainText("\n".join(lines))
 
     # ------------------------------------------------------------------ serve menu
 
@@ -250,9 +327,9 @@ class MainWindow(QMainWindow):
     def _on_server_error(self, error: str):
         self._status_label.setText(f"Error: {error}")
 
-    def _on_message_received(self, sender: str, content: str, date: str):
-        self.db.add_message(sender, content, date)
-        self._status_label.setText(f"Message received from {sender}")
+    def _on_message_received(self, sender: str, content: str, date: str, conversation: str):
+        self.db.add_message(sender, content, date, conversation)
+        self._status_label.setText(f"Message received from {sender} ({conversation})")
 
     # ------------------------------------------------------------------ countdown
 
@@ -302,14 +379,13 @@ class MainWindow(QMainWindow):
         self._seconds_left = interval
         self._update_timer_display()
 
-        # Open the report panel and show a live log
         if not self._report_area.isVisible():
             self._toggle_report()
         self._report_text.setPlainText("")
         self._log_lines = []
 
         worker = ReportWorker(self.db, self.settings)
-        thread = QThread()                          # no parent — deleteLater handles cleanup
+        thread = QThread()
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(thread.quit)
@@ -321,7 +397,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._on_report_done,   Qt.QueuedConnection)
         worker.error.connect(self._on_report_error,     Qt.QueuedConnection)
         self._report_thread = thread
-        self._worker_ref = worker                   # keep Python ref alive until deleteLater fires
+        self._worker_ref = worker
         thread.start()
 
     @pyqtSlot(str)
@@ -335,7 +411,6 @@ class MainWindow(QMainWindow):
     def _on_report_done(self, report: str):
         self._latest_report = report
         self.db.add_report(report)
-        # Append separator + final report below the tool log
         separator = "─" * 40
         full_text = "\n".join(self._log_lines) + f"\n\n{separator}\n\n{report}"
         self._report_text.setPlainText(full_text)
@@ -398,6 +473,12 @@ class MainWindow(QMainWindow):
     def _open_data(self):
         dlg = DataDialog(self.db, self)
         dlg.exec_()
+
+    def _open_context_editor(self):
+        dlg = ContextDialog(self.db, self.settings, self)
+        if dlg.exec_():
+            save_settings(self.settings)
+            self._refresh_context_display()
 
     def _show_window(self):
         self.showNormal()

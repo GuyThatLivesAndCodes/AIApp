@@ -40,11 +40,12 @@ RULES:
 TOOL_DEFINITIONS = [
     {
         "name": "search_messages",
-        "description": "Search for messages based on sender, date range, or keywords in content.",
+        "description": "Search for messages based on sender, conversation, date range, or keywords in content.",
         "parameters": {
             "type": "object",
             "properties": {
                 "sender": {"type": "string", "description": "Filter by sender name (optional)"},
+                "conversation": {"type": "string", "description": "Filter by conversation name, e.g. 'Liam Smith' or 'The Family' (optional)"},
                 "start_date": {"type": "string", "description": "Start date filter e.g. '5/9/2026' (optional)"},
                 "end_date": {"type": "string", "description": "End date filter e.g. '5/10/2026' (optional)"},
                 "keywords": {"type": "string", "description": "Keywords to search in message content (optional)"},
@@ -107,5 +108,14 @@ DEFAULT_SETTINGS = {
     },
     "notifications": {
         "enabled": True,
+    },
+    "user": {
+        "name": "",
+        "context": {
+            "friends": [],
+            "family": [],
+            "crushes": [],
+            "custom": "",
+        },
     },
 }

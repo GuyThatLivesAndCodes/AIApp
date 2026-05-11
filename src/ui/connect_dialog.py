@@ -9,14 +9,14 @@ from PyQt5.QtGui import QFont
 _CURL = """\
 curl -X POST http://localhost:{port}/message \\
   -H "Content-Type: application/json" \\
-  -d '{{"sender":"Liam","content":"yo sarah broke up wit that guy","date":"5/9/2026 5:19PM"}}'"""
+  -d '{{"sender":"Liam","content":"yo sarah broke up wit that guy","date":"5/9/2026 5:19PM","conversation":"Liam Smith"}}'"""
 
 _POWERSHELL = """\
 Invoke-RestMethod `
   -Uri "http://localhost:{port}/message" `
   -Method POST `
   -ContentType "application/json" `
-  -Body '{{"sender":"Liam","content":"yo sarah broke up wit that guy","date":"5/9/2026 5:19PM"}}'"""
+  -Body '{{"sender":"Liam","content":"yo sarah broke up wit that guy","date":"5/9/2026 5:19PM","conversation":"Liam Smith"}}'"""
 
 _PYTHON = """\
 import requests
@@ -24,9 +24,10 @@ import requests
 requests.post(
     "http://localhost:{port}/message",
     json={{
-        "sender": "Liam",
-        "content": "yo sarah broke up wit that guy",
-        "date": "5/9/2026 5:19PM",
+        "sender":       "Liam",
+        "content":      "yo sarah broke up wit that guy",
+        "date":         "5/9/2026 5:19PM",
+        "conversation": "Liam Smith",   # DM name or group e.g. "The Family"
     }},
 )"""
 
@@ -35,9 +36,10 @@ fetch("http://localhost:{port}/message", {{
   method: "POST",
   headers: {{ "Content-Type": "application/json" }},
   body: JSON.stringify({{
-    sender: "Liam",
-    content: "yo sarah broke up wit that guy",
-    date: "5/9/2026 5:19PM",
+    sender:       "Liam",
+    content:      "yo sarah broke up wit that guy",
+    date:         "5/9/2026 5:19PM",
+    conversation: "Liam Smith",  // DM name or group e.g. "The Family"
   }}),
 }});"""
 
@@ -47,9 +49,10 @@ const res = await fetch("http://localhost:{port}/message", {{
   method: "POST",
   headers: {{ "Content-Type": "application/json" }},
   body: JSON.stringify({{
-    sender: "Liam",
-    content: "yo sarah broke up wit that guy",
-    date: "5/9/2026 5:19PM",
+    sender:       "Liam",
+    content:      "yo sarah broke up wit that guy",
+    date:         "5/9/2026 5:19PM",
+    conversation: "Liam Smith",  // DM = sender name, group = group name
   }}),
 }});
 console.log(await res.json());"""
@@ -59,14 +62,17 @@ POST http://localhost:{port}/message
 Content-Type: application/json
 
 {{
-  "sender":  "string — who sent the message",
-  "content": "string — the message text",
-  "date":    "string — e.g. 5/9/2026 5:19PM"
+  "sender":       "string — who sent the message",
+  "content":      "string — the message text",
+  "date":         "string — e.g. 5/9/2026 5:19PM",
+  "conversation": "string — chat name (DM: sender name, group: group name)"
 }}
 
+All four fields are required.
+
 Responses:
-  200  {{"status":"ok","sender":"..."}}
-  400  {{"error":"sender, content and date are required"}}
+  200  {{"status":"ok","sender":"...","conversation":"..."}}
+  400  {{"error":"sender, content, date and conversation are required"}}
   404  {{"error":"use POST /message"}}
 
 Health check:

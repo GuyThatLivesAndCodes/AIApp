@@ -451,4 +451,32 @@ QSplitter::handle {
     background-color: #141414;
     width: 1px;
 }
+
+/* ── Context panel ── */
+QFrame#contextPanel {
+    background-color: #070707;
+    border-right: 1px solid #161616;
+}
+QTextEdit#contextDisplay {
+    background-color: #070707;
+    border: none;
+    color: #606060;
+    font-size: 11px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    padding: 2px 0px;
+    selection-background-color: #1e1e1e;
+}
+QPushButton#editContextBtn {
+    background-color: transparent;
+    border: 1px solid #1e1e1e;
+    color: #404040;
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 4px;
+}
+QPushButton#editContextBtn:hover {
+    background-color: #111111;
+    color: #aaaaaa;
+    border-color: #2c2c2c;
+}
 """

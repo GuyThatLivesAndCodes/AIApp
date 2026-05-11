@@ -37,10 +37,10 @@ class DataDialog(QDialog):
         msg_layout = QVBoxLayout(msg_widget)
         msg_layout.setContentsMargins(0, 8, 0, 0)
 
-        self._msg_table = QTableWidget(0, 4)
-        self._msg_table.setHorizontalHeaderLabels(["ID", "Sender", "Date", "Content"])
+        self._msg_table = QTableWidget(0, 5)
+        self._msg_table.setHorizontalHeaderLabels(["ID", "Sender", "Conversation", "Date", "Content"])
         self._msg_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self._msg_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self._msg_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self._msg_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._msg_table.setSelectionMode(QTableWidget.ExtendedSelection)  # multi-select
         self._msg_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -153,11 +153,12 @@ class DataDialog(QDialog):
             id_item.setData(Qt.UserRole, msg["id"])   # store int id for deletion
             self._msg_table.setItem(row_idx, 0, id_item)
             self._msg_table.setItem(row_idx, 1, QTableWidgetItem(msg["sender"]))
-            self._msg_table.setItem(row_idx, 2, QTableWidgetItem(msg["date"]))
+            self._msg_table.setItem(row_idx, 2, QTableWidgetItem(msg.get("conversation", "")))
+            self._msg_table.setItem(row_idx, 3, QTableWidgetItem(msg["date"]))
             preview = msg["content"][:80] + ("…" if len(msg["content"]) > 80 else "")
             item = QTableWidgetItem(preview)
             item.setData(Qt.UserRole, msg["content"])
-            self._msg_table.setItem(row_idx, 3, item)
+            self._msg_table.setItem(row_idx, 4, item)
         self._msg_count_label.setText(f"{len(messages)} messages stored")
 
         self._rep_list.clear()
@@ -218,12 +219,14 @@ class DataDialog(QDialog):
             self._msg_detail.clear()
             return
         row = selected[0].row()
-        content_item = self._msg_table.item(row, 3)
+        content_item = self._msg_table.item(row, 4)
         if content_item:
             full = content_item.data(Qt.UserRole)
             sender = self._msg_table.item(row, 1).text()
-            date = self._msg_table.item(row, 2).text()
-            self._msg_detail.setPlainText(f"From: {sender}\nDate: {date}\n\n{full}")
+            convo = self._msg_table.item(row, 2).text()
+            date = self._msg_table.item(row, 3).text()
+            convo_line = f"Conversation: {convo}\n" if convo else ""
+            self._msg_detail.setPlainText(f"From: {sender}\n{convo_line}Date: {date}\n\n{full}")
 
     def _delete_selected(self):
         selected_rows = self._msg_table.selectionModel().selectedRows()

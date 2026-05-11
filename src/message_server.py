@@ -5,20 +5,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from PyQt5.QtCore import QObject, pyqtSignal
 
 
-def _parse_kv(raw: str) -> dict:
-    """Parse key:value line format."""
-    fields = {}
-    for line in raw.strip().splitlines():
-        line = line.strip()
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fields[key.strip().lower()] = value.strip()
-    return fields
-
-
 class MessageServer(QObject):
-    message_received = pyqtSignal(str, str, str)   # sender, content, date
-    status_changed = pyqtSignal(bool, str)          # running, info_text
+    message_received = pyqtSignal(str, str, str, str)  # sender, content, date, conversation
+    status_changed = pyqtSignal(bool, str)              # running, info_text
     error_occurred = pyqtSignal(str)
 
     def __init__(self, port: int = 774):
@@ -37,7 +26,7 @@ class MessageServer(QObject):
         if port is not None:
             self.port = port
 
-        emitter = self  # captured in handler closure
+        emitter = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -47,7 +36,6 @@ class MessageServer(QObject):
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length).decode("utf-8", errors="replace")
 
-                # Accept JSON or key:value text
                 ct = self.headers.get("Content-Type", "")
                 if "json" in ct:
                     try:
@@ -56,18 +44,20 @@ class MessageServer(QObject):
                         self._respond(400, {"error": "invalid JSON"})
                         return
                 else:
-                    data = _parse_kv(body)
-
-                sender = str(data.get("sender", "")).strip()
-                content = str(data.get("content", "")).strip()
-                date = str(data.get("date", "")).strip()
-
-                if not (sender and content and date):
-                    self._respond(400, {"error": "sender, content and date are required"})
+                    self._respond(400, {"error": "Content-Type: application/json required"})
                     return
 
-                emitter.message_received.emit(sender, content, date)
-                self._respond(200, {"status": "ok", "sender": sender})
+                sender       = str(data.get("sender",       "")).strip()
+                content      = str(data.get("content",      "")).strip()
+                date         = str(data.get("date",         "")).strip()
+                conversation = str(data.get("conversation", "")).strip()
+
+                if not (sender and content and date and conversation):
+                    self._respond(400, {"error": "sender, content, date and conversation are required"})
+                    return
+
+                emitter.message_received.emit(sender, content, date, conversation)
+                self._respond(200, {"status": "ok", "sender": sender, "conversation": conversation})
 
             def do_GET(self):
                 if self.path in ("/", "/health"):
@@ -84,7 +74,7 @@ class MessageServer(QObject):
                 self.wfile.write(payload)
 
             def log_message(self, *args):
-                pass  # suppress default stderr logging
+                pass
 
         try:
             self._http_server = HTTPServer(("0.0.0.0", self.port), Handler)

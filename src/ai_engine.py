@@ -4,55 +4,97 @@ from typing import Optional
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from config import SYSTEM_PROMPT, TOOL_DEFINITIONS
-
-CHAT_SYSTEM_PROMPT = (
-    SYSTEM_PROMPT
-    + "\n\nYou are now in a back-and-forth conversation with the user. "
-    "Answer their questions directly and casually. Use your tools to look up "
-    "specific messages or details whenever needed. Same tone — casual, like a friend, all lowercase."
-)
 from database import Database
+
+
+# ------------------------------------------------------------------ chat system prompt
+
+def _build_chat_system_prompt(settings: dict) -> str:
+    base = (
+        SYSTEM_PROMPT
+        + "\n\nYou are now in a back-and-forth conversation with the user. "
+        "Answer their questions directly and casually. Use your tools to look up "
+        "specific messages or details whenever needed. Same tone — casual, like a friend, all lowercase."
+    )
+    ctx_lines = _user_context_lines(settings)
+    if ctx_lines:
+        return base + "\n\nUSER CONTEXT:\n" + "\n".join(ctx_lines)
+    return base
+
+
+# ------------------------------------------------------------------ user context helper
+
+def _user_context_lines(settings: dict) -> list[str]:
+    user = settings.get("user", {})
+    name = user.get("name", "").strip()
+    ctx = user.get("context", {})
+    friends = ctx.get("friends", [])
+    family = ctx.get("family", [])
+    crushes = ctx.get("crushes", [])
+    custom = ctx.get("custom", "").strip()
+
+    lines = []
+    if name:
+        lines.append(f"  The user's name is {name}. When messages mention them by name, pay extra attention.")
+    if friends:
+        lines.append(f"  Friends: {', '.join(friends)}")
+    if family:
+        lines.append(f"  Family: {', '.join(family)}")
+    if crushes:
+        lines.append(f"  Crushes/Romantic interests: {', '.join(crushes)}")
+    if custom:
+        lines.append(f"  About the user: {custom}")
+    return lines
 
 
 # ------------------------------------------------------------------ context builder
 
-def _build_context_message(db: Database) -> str:
-    """
-    Feed the AI a snapshot of what's in the database so it can reason
-    immediately without fumbling through empty tool calls first.
-    """
+def _build_context_message(db: Database, settings: dict) -> str:
     total = db.get_message_count()
     senders = db.get_senders()
-    recent = db.get_recent_messages(n=20)
+    conversations = db.get_conversations()
+
+    # Scale how many recent messages we show with total count
+    n_recent = 30 if total > 50 else 20
+    recent = db.get_recent_messages(n=n_recent)
 
     lines = []
 
+    # User context block
+    ctx_lines = _user_context_lines(settings)
+    if ctx_lines:
+        lines.append("USER CONTEXT:")
+        lines.extend(ctx_lines)
+        lines.append("")
+
     if total == 0:
         lines.append("There are no messages in the directory yet.")
-        lines.append(
-            "Generate a brief report noting there's nothing to report right now."
-        )
+        lines.append("Generate a brief report noting there's nothing to report right now.")
         return "\n".join(lines)
 
+    convo_part = ""
+    if conversations:
+        convo_part = f" across {len(conversations)} conversation(s): {', '.join(conversations)}"
     lines.append(
-        f"There are {total} message(s) in the directory from "
-        f"{len(senders)} sender(s): {', '.join(senders)}."
+        f"There are {total} message(s) from {len(senders)} sender(s){convo_part}."
     )
     lines.append("")
     lines.append(f"Here are the {len(recent)} most recent message(s) — read them carefully:")
     lines.append("")
 
     for msg in recent:
+        convo_tag = f"[{msg['conversation']}] " if msg.get("conversation") else ""
         lines.append(
-            f"  [ID {msg['id']}] {msg['date']} | From: {msg['sender']}\n"
+            f"  [ID {msg['id']}] {msg['date']} | {convo_tag}From: {msg['sender']}\n"
             f"  {msg['content']}"
         )
 
     if total > len(recent):
         lines.append("")
         lines.append(
-            f"  (showing latest {len(recent)} of {total} total — "
-            f"use search_messages or get_raw_messages to retrieve older ones)"
+            f"  !! IMPORTANT: You are only seeing {len(recent)} of {total} total messages. "
+            f"You MUST use search_messages and get_raw_messages to check older messages. "
+            f"Search by sender name, conversation name, date ranges, and keywords to be thorough."
         )
 
     lines.append("")
@@ -73,6 +115,7 @@ def execute_tool(db: Database, name: str, args: dict) -> str:
         if name == "search_messages":
             rows = db.search_messages(
                 sender=args.get("sender"),
+                conversation=args.get("conversation"),
                 start_date=args.get("start_date"),
                 end_date=args.get("end_date"),
                 keywords=args.get("keywords"),
@@ -155,7 +198,6 @@ def _fmt_args(args: dict) -> str:
 
 
 def _fmt_result(result: str) -> str:
-    """Return a short human-readable summary of a tool result."""
     stripped = result.strip()
     if stripped.startswith("[") or stripped.startswith("{"):
         try:
@@ -171,6 +213,23 @@ def _fmt_result(result: str) -> str:
     return stripped
 
 
+# ------------------------------------------------------------------ tool call serialisation
+
+def _serialise_tool_calls(tool_calls) -> list[dict]:
+    """Convert SDK tool_call objects to plain dicts for xAI/LM Studio compatibility."""
+    return [
+        {
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        for tc in (tool_calls or [])
+    ]
+
+
 # ------------------------------------------------------------------ provider runners
 
 def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
@@ -182,7 +241,7 @@ def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
 
     client = anthropic.Anthropic(api_key=settings["ai"]["anthropic_api_key"])
     model = settings["ai"].get("anthropic_model", "claude-opus-4-7")
-    user_msg = _build_context_message(db)
+    user_msg = _build_context_message(db, settings)
     messages = [{"role": "user", "content": user_msg}]
 
     log("── scanning messages ──")
@@ -220,7 +279,9 @@ def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
     return "Report generation stopped unexpectedly."
 
 
-def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], model: str, log_fn=None) -> str:
+def _run_openai_compat(
+    db: Database, settings: dict, api_key: str, base_url: Optional[str], model: str, log_fn=None
+) -> str:
     from openai import OpenAI
 
     def log(msg):
@@ -232,7 +293,7 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
         kwargs["base_url"] = base_url
 
     client = OpenAI(**kwargs)
-    user_msg = _build_context_message(db)
+    user_msg = _build_context_message(db, settings)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
@@ -242,12 +303,22 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
     log("── scanning messages ──")
 
     for _ in range(15):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-        )
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+            )
+        except Exception as e:
+            err = str(e).lower()
+            if any(k in err for k in ("tool", "function", "not supported", "unsupported", "unknown")):
+                log("⚠ tools not supported by this model — running without")
+                resp = client.chat.completions.create(model=model, messages=messages)
+                log("── writing report ──")
+                return resp.choices[0].message.content or "No report generated."
+            raise
+
         choice = resp.choices[0]
 
         if choice.finish_reason == "stop":
@@ -255,15 +326,19 @@ def _run_openai_compat(db: Database, api_key: str, base_url: Optional[str], mode
             return choice.message.content or "No report generated."
 
         if choice.finish_reason == "tool_calls":
-            messages.append(choice.message)
+            # Explicit dict — third-party APIs (xAI, LM Studio) reject Pydantic model objects
+            tc_dicts = _serialise_tool_calls(choice.message.tool_calls)
+            messages.append({
+                "role": "assistant",
+                "content": choice.message.content,  # may be None; valid per OpenAI spec
+                "tool_calls": tc_dicts,
+            })
             for tc in choice.message.tool_calls:
                 args = json.loads(tc.function.arguments)
                 log(f"→ {tc.function.name}({_fmt_args(args)})")
                 result = execute_tool(db, tc.function.name, args)
                 log(f"  ↳ {_fmt_result(result)}")
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result}
-                )
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
         else:
             break
 
@@ -304,25 +379,25 @@ def generate_report(db: Database, settings: dict, log_fn=None) -> str:
         if not settings["ai"].get("openai_api_key"):
             return "no openai api key configured — add one in Settings"
         model = settings["ai"].get("openai_model", "gpt-4o")
-        return _run_openai_compat(db, settings["ai"]["openai_api_key"], None, model, log_fn=log_fn)
+        return _run_openai_compat(db, settings, settings["ai"]["openai_api_key"], None, model, log_fn)
 
     elif provider == "xai":
         if not settings["ai"].get("xai_api_key"):
             return "no xai api key configured — add one in Settings"
         model = settings["ai"].get("xai_model", "grok-3")
-        return _run_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, log_fn=log_fn)
+        return _run_openai_compat(db, settings, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, log_fn)
 
     elif provider == "ollama":
         host = settings["ai"].get("ollama_host", "localhost")
         port = settings["ai"].get("ollama_port", 11434)
         model = settings["ai"].get("ollama_model") or _detect_local_model(host, port, "ollama")
-        return _run_openai_compat(db, "ollama", f"http://{host}:{port}/v1", model, log_fn=log_fn)
+        return _run_openai_compat(db, settings, "ollama", f"http://{host}:{port}/v1", model, log_fn)
 
     elif provider == "lm_studio":
         host = settings["ai"].get("lm_studio_host", "localhost")
         port = settings["ai"].get("lm_studio_port", 1234)
         model = settings["ai"].get("lm_studio_model") or _detect_local_model(host, port, "lm_studio")
-        return _run_openai_compat(db, "lm-studio", f"http://{host}:{port}/v1", model, log_fn=log_fn)
+        return _run_openai_compat(db, settings, "lm-studio", f"http://{host}:{port}/v1", model, log_fn)
 
     return "unknown provider selected"
 
@@ -338,6 +413,7 @@ def _chat_anthropic(db: Database, settings: dict, history: list, user_message: s
 
     client = anthropic.Anthropic(api_key=settings["ai"]["anthropic_api_key"])
     model = settings["ai"].get("anthropic_model", "claude-opus-4-7")
+    system = _build_chat_system_prompt(settings)
 
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": user_message})
@@ -348,7 +424,7 @@ def _chat_anthropic(db: Database, settings: dict, history: list, user_message: s
         resp = client.messages.create(
             model=model,
             max_tokens=1024,
-            system=CHAT_SYSTEM_PROMPT,
+            system=system,
             tools=_anthropic_tools(),
             messages=messages,
         )
@@ -378,7 +454,7 @@ def _chat_anthropic(db: Database, settings: dict, history: list, user_message: s
 
 
 def _chat_openai_compat(
-    db: Database, api_key: str, base_url: Optional[str], model: str,
+    db: Database, settings: dict, api_key: str, base_url: Optional[str], model: str,
     history: list, user_message: str, log_fn=None
 ) -> str:
     from openai import OpenAI
@@ -392,16 +468,27 @@ def _chat_openai_compat(
         kwargs["base_url"] = base_url
 
     client = OpenAI(**kwargs)
-    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    system = _build_chat_system_prompt(settings)
+    messages = [{"role": "system", "content": system}]
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": user_message})
 
     log("── thinking ──")
 
     for _ in range(15):
-        resp = client.chat.completions.create(
-            model=model, messages=messages, tools=_openai_tools(), tool_choice="auto"
-        )
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=messages, tools=_openai_tools(), tool_choice="auto"
+            )
+        except Exception as e:
+            err = str(e).lower()
+            if any(k in err for k in ("tool", "function", "not supported", "unsupported", "unknown")):
+                log("⚠ tools not supported — retrying without")
+                resp = client.chat.completions.create(model=model, messages=messages)
+                log("── done ──")
+                return resp.choices[0].message.content or ""
+            raise
+
         choice = resp.choices[0]
 
         if choice.finish_reason == "stop":
@@ -409,15 +496,18 @@ def _chat_openai_compat(
             return choice.message.content or ""
 
         if choice.finish_reason == "tool_calls":
-            messages.append(choice.message)
+            tc_dicts = _serialise_tool_calls(choice.message.tool_calls)
+            messages.append({
+                "role": "assistant",
+                "content": choice.message.content,
+                "tool_calls": tc_dicts,
+            })
             for tc in choice.message.tool_calls:
                 args = json.loads(tc.function.arguments)
                 log(f"→ {tc.function.name}({_fmt_args(args)})")
                 result = execute_tool(db, tc.function.name, args)
                 log(f"  ↳ {_fmt_result(result)}")
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result}
-                )
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
         else:
             break
 
@@ -433,30 +523,30 @@ def run_chat_turn(
         return _chat_anthropic(db, settings, history, user_message, log_fn)
     elif provider == "openai":
         model = settings["ai"].get("openai_model", "gpt-4o")
-        return _chat_openai_compat(db, settings["ai"]["openai_api_key"], None, model, history, user_message, log_fn)
+        return _chat_openai_compat(db, settings, settings["ai"]["openai_api_key"], None, model, history, user_message, log_fn)
     elif provider == "xai":
         model = settings["ai"].get("xai_model", "grok-3")
-        return _chat_openai_compat(db, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, history, user_message, log_fn)
+        return _chat_openai_compat(db, settings, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, history, user_message, log_fn)
     elif provider == "ollama":
         host = settings["ai"].get("ollama_host", "localhost")
         port = settings["ai"].get("ollama_port", 11434)
         model = settings["ai"].get("ollama_model") or _detect_local_model(host, port, "ollama")
-        return _chat_openai_compat(db, "ollama", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
+        return _chat_openai_compat(db, settings, "ollama", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
     elif provider == "lm_studio":
         host = settings["ai"].get("lm_studio_host", "localhost")
         port = settings["ai"].get("lm_studio_port", 1234)
         model = settings["ai"].get("lm_studio_model") or _detect_local_model(host, port, "lm_studio")
-        return _chat_openai_compat(db, "lm-studio", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
+        return _chat_openai_compat(db, settings, "lm-studio", f"http://{host}:{port}/v1", model, history, user_message, log_fn)
 
     return "unknown provider"
 
 
-# ------------------------------------------------------------------ async worker
+# ------------------------------------------------------------------ async workers
 
 class ReportWorker(QObject):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
-    log_update = pyqtSignal(str)   # emitted for each tool call / status line
+    log_update = pyqtSignal(str)
 
     def __init__(self, db: Database, settings: dict):
         super().__init__()

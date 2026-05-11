@@ -66,15 +66,15 @@ class Database:
 
     def _init_db(self):
         with self._connect() as conn:
-            # Create tables and sender index (no date_ts index yet — column may not exist on old DBs)
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS messages (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender      TEXT NOT NULL,
-                    content     TEXT NOT NULL,
-                    date        TEXT NOT NULL,
-                    date_ts     TEXT,
-                    received_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender       TEXT NOT NULL,
+                    content      TEXT NOT NULL,
+                    date         TEXT NOT NULL,
+                    date_ts      TEXT,
+                    conversation TEXT NOT NULL DEFAULT '',
+                    received_at  TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender);
 
@@ -91,17 +91,18 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
             """)
-            # Migration: add date_ts to databases created before this column existed
-            try:
-                conn.execute("ALTER TABLE messages ADD COLUMN date_ts TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already present
-            # Now safe to create the index — column is guaranteed to exist
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_msg_date_ts ON messages(date_ts)"
-            )
+            # Migrations: run each ALTER TABLE; ignore if column already present
+            for migration in [
+                "ALTER TABLE messages ADD COLUMN date_ts TEXT",
+                "ALTER TABLE messages ADD COLUMN conversation TEXT NOT NULL DEFAULT ''",
+            ]:
+                try:
+                    conn.execute(migration)
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_date_ts ON messages(date_ts)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_conversation ON messages(conversation)")
 
-        # Backfill date_ts for any rows that are missing it
         self._backfill_date_ts()
 
     def _backfill_date_ts(self):
@@ -119,12 +120,12 @@ class Database:
 
     # ------------------------------------------------------------------ messages
 
-    def add_message(self, sender: str, content: str, date: str) -> int:
+    def add_message(self, sender: str, content: str, date: str, conversation: str = "") -> int:
         date_ts = parse_date_to_iso(date)
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO messages (sender, content, date, date_ts) VALUES (?, ?, ?, ?)",
-                (sender, content, date, date_ts),
+                "INSERT INTO messages (sender, content, date, date_ts, conversation) VALUES (?, ?, ?, ?, ?)",
+                (sender, content, date, date_ts, conversation),
             )
             return cur.lastrowid
 
@@ -156,6 +157,7 @@ class Database:
     def search_messages(
         self,
         sender: Optional[str] = None,
+        conversation: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         keywords: Optional[str] = None,
@@ -165,6 +167,9 @@ class Database:
         if sender:
             query += " AND LOWER(sender) LIKE LOWER(?)"
             params.append(f"%{sender}%")
+        if conversation:
+            query += " AND LOWER(conversation) LIKE LOWER(?)"
+            params.append(f"%{conversation}%")
         date_clause, date_params = self._date_clauses(start_date, end_date)
         query += date_clause
         params.extend(date_params)
@@ -175,6 +180,13 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
+
+    def get_conversations(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT conversation FROM messages WHERE conversation != '' ORDER BY conversation"
+            ).fetchall()
+        return [r["conversation"] for r in rows]
 
     def get_raw_messages(
         self,
