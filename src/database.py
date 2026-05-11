@@ -11,18 +11,28 @@ from config import DATA_DIR, DB_PATH, SETTINGS_PATH, DEFAULT_SETTINGS
 # ------------------------------------------------------------------ date parsing
 
 _DATE_FORMATS = [
-    # 4-digit year  ── most common (messages arrive in this format)
+    # 4-digit year, no comma  ── format used in connect_dialog examples
     "%m/%d/%Y %I:%M %p",   # 05/09/2026 05:19 PM
     "%m/%d/%Y %I:%M%p",    # 05/09/2026 05:19PM
     "%m/%d/%Y %H:%M:%S",   # 05/09/2026 17:19:00
     "%m/%d/%Y %H:%M",      # 05/09/2026 17:19
     "%m/%d/%Y",            # 05/09/2026
-    # 2-digit year  ── AI tool calls often abbreviate (e.g. 4/1/26)
+    # 4-digit year, comma    ── e.g. copy-pasted from iMessage/iOS share sheet
+    "%m/%d/%Y, %I:%M %p",  # 4/1/2026, 10:34 PM
+    "%m/%d/%Y, %I:%M%p",   # 4/1/2026, 10:34PM
+    "%m/%d/%Y, %H:%M:%S",  # 4/1/2026, 17:19:00
+    "%m/%d/%Y, %H:%M",     # 4/1/2026, 17:19
+    # 2-digit year, no comma ── AI tool calls often abbreviate (e.g. 4/1/26)
     "%m/%d/%y %I:%M %p",   # 4/1/26 05:19 PM
     "%m/%d/%y %I:%M%p",    # 4/1/26 05:19PM
     "%m/%d/%y %H:%M:%S",   # 4/1/26 17:19:00
     "%m/%d/%y %H:%M",      # 4/1/26 17:19
     "%m/%d/%y",            # 4/1/26
+    # 2-digit year, comma    ── iOS/macOS date export format
+    "%m/%d/%y, %I:%M %p",  # 4/1/26, 10:34 PM
+    "%m/%d/%y, %I:%M%p",   # 4/1/26, 10:34PM
+    "%m/%d/%y, %H:%M:%S",  # 4/1/26, 17:19:00
+    "%m/%d/%y, %H:%M",     # 4/1/26, 17:19
     # ISO
     "%Y-%m-%dT%H:%M:%S",
     "%Y-%m-%d %H:%M:%S",
