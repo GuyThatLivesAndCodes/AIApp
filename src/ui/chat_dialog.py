@@ -123,30 +123,27 @@ class ChatDialog(QDialog):
         self._send_btn.setEnabled(False)
         self._input.setEnabled(False)
 
-        # ---- Canonical PyQt5 worker pattern --------------------------------
-        # No parent on either object — deleteLater handles C++ lifetime.
-        # Explicit QueuedConnection ensures slots run on the main-thread
-        # event loop regardless of when moveToThread was called.
         worker = ChatTurnWorker(self.db, self.settings, list(self._history), text)
-        thread = QThread()                       # ← no parent
+        thread = QThread()
 
         worker.moveToThread(thread)
 
-        # Wire up work and cleanup
+        # DirectConnection for thread.quit so it fires synchronously from the
+        # bg thread without going through the main-thread event loop first.
+        # This keeps the worker alive long enough for the queued _on_ai_done /
+        # _on_ai_error delivery — auto-connecting worker.deleteLater here would
+        # destroy the worker immediately (same-thread direct call), orphaning
+        # the pending queued events before the main thread can process them.
         thread.started.connect(worker.run)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)   # C++ cleanup after thread stops
-        worker.error.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)   # C++ cleanup
+        worker.finished.connect(thread.quit, Qt.DirectConnection)
+        worker.error.connect(thread.quit,    Qt.DirectConnection)
+        thread.finished.connect(thread.deleteLater)
+        # Worker lifetime is managed by self._worker; GC runs after replacement.
 
-        # Cross-thread UI updates — always queued so they land on main thread
-        worker.log_update.connect(self._on_log,     Qt.QueuedConnection)
-        worker.finished.connect(self._on_ai_done,   Qt.QueuedConnection)
-        worker.error.connect(self._on_ai_error,     Qt.QueuedConnection)
+        worker.log_update.connect(self._on_log,    Qt.QueuedConnection)
+        worker.finished.connect(self._on_ai_done,  Qt.QueuedConnection)
+        worker.error.connect(self._on_ai_error,    Qt.QueuedConnection)
 
-        # Keep strong Python references so GC doesn't collect wrappers
-        # before Qt has finished with the underlying C++ objects.
         self._thread = thread
         self._worker = worker
 

@@ -474,16 +474,14 @@ class MainWindow(QMainWindow):
         thread = QThread()
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
+        worker.finished.connect(thread.quit, Qt.DirectConnection)
+        worker.error.connect(thread.quit,    Qt.DirectConnection)
         thread.finished.connect(thread.deleteLater)
-        worker.log_update.connect(self._on_log_line,    Qt.QueuedConnection)
-        worker.finished.connect(self._on_report_done,   Qt.QueuedConnection)
-        worker.error.connect(self._on_report_error,     Qt.QueuedConnection)
+        worker.log_update.connect(self._on_log_line,   Qt.QueuedConnection)
+        worker.finished.connect(self._on_report_done,  Qt.QueuedConnection)
+        worker.error.connect(self._on_report_error,    Qt.QueuedConnection)
         self._report_thread = thread
-        self._worker_ref = worker
+        self._worker_ref = worker   # keeps worker alive; GC'd when replaced
         thread.start()
 
     @pyqtSlot(str)

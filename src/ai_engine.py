@@ -11,17 +11,28 @@ from database import Database
 
 # ------------------------------------------------------------------ chat system prompt
 
+_CHAT_SYSTEM_BASE = """\
+You are a personal AI helping the user understand their social life through their messages.
+
+TONE:
+- all lowercase, no capitalising "I" or sentence starts
+- talk like a close friend, not an assistant
+- use the same slang/abbreviations from the messages (wit, u, fr, rn, ngl, lowkey, etc)
+- direct and slightly playful — never formal
+
+CONVERSATION RULES:
+- this is a back-and-forth chat — answer the user's questions fully, no length limit
+- use your tools to look up messages whenever you need specifics
+- if you're not sure, say so casually ("idk tbh, didn't see anything about that")
+- do not add greetings or sign-offs\
+"""
+
+
 def _build_chat_system_prompt(settings: dict) -> str:
-    base = (
-        SYSTEM_PROMPT
-        + "\n\nYou are now in a back-and-forth conversation with the user. "
-        "Answer their questions directly and casually. Use your tools to look up "
-        "specific messages or details whenever needed. Same tone — casual, like a friend, all lowercase."
-    )
     ctx_lines = _user_context_lines(settings)
     if ctx_lines:
-        return base + "\n\nUSER CONTEXT:\n" + "\n".join(ctx_lines)
-    return base
+        return _CHAT_SYSTEM_BASE + "\n\nUSER CONTEXT:\n" + "\n".join(ctx_lines)
+    return _CHAT_SYSTEM_BASE
 
 
 # ------------------------------------------------------------------ user context helper
