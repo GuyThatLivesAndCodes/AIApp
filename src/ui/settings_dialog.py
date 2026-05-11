@@ -2,9 +2,10 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox,
     QPushButton, QDialogButtonBox, QGroupBox, QFormLayout,
     QComboBox, QCheckBox, QStackedWidget, QWidget, QTabWidget,
-    QRadioButton, QButtonGroup,
+    QRadioButton, QButtonGroup, QListWidget, QListWidgetItem,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTime
+from PyQt5.QtWidgets import QTimeEdit
 
 
 PROVIDERS = [
@@ -148,6 +149,45 @@ class SettingsDialog(QDialog):
         notif_layout.addStretch()
         tabs.addTab(notif_widget, "Notifications")
 
+        # --- Schedule tab ---
+        sched_widget = QWidget()
+        sched_layout = QVBoxLayout(sched_widget)
+        sched_layout.setContentsMargins(12, 12, 12, 12)
+        sched_layout.setSpacing(10)
+
+        sched_group = QGroupBox("REPORT SCHEDULE")
+        sg_layout = QVBoxLayout(sched_group)
+        sg_layout.setSpacing(8)
+
+        hint = QLabel("The AI will generate a report automatically at each scheduled time.")
+        hint.setStyleSheet("color: #555555; font-size: 11px;")
+        hint.setWordWrap(True)
+        sg_layout.addWidget(hint)
+
+        self._sched_list = QListWidget()
+        self._sched_list.setMaximumHeight(130)
+        sg_layout.addWidget(self._sched_list)
+
+        add_row = QHBoxLayout()
+        self._time_edit = QTimeEdit()
+        self._time_edit.setDisplayFormat("hh:mm AP")
+        self._time_edit.setTime(QTime(7, 0))
+        add_btn = QPushButton("Add")
+        add_btn.setFixedWidth(60)
+        add_btn.clicked.connect(self._add_schedule_time)
+        remove_btn = QPushButton("Remove")
+        remove_btn.setFixedWidth(70)
+        remove_btn.clicked.connect(self._remove_schedule_time)
+        add_row.addWidget(self._time_edit)
+        add_row.addWidget(add_btn)
+        add_row.addStretch()
+        add_row.addWidget(remove_btn)
+        sg_layout.addLayout(add_row)
+
+        sched_layout.addWidget(sched_group)
+        sched_layout.addStretch()
+        tabs.addTab(sched_widget, "Schedule")
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -175,6 +215,10 @@ class SettingsDialog(QDialog):
 
         self._notif_check.setChecked(self.settings["notifications"].get("enabled", True))
 
+        self._sched_list.clear()
+        for t in self.settings.get("schedule", []):
+            self._sched_list.addItem(t)
+
     def _save(self):
         provider_keys = [p[1] for p in PROVIDERS]
         self.settings["ai"]["provider"] = provider_keys[self._provider_combo.currentIndex()]
@@ -193,4 +237,23 @@ class SettingsDialog(QDialog):
         self.settings["ai"]["lm_studio_model"] = self._lms_model.text().strip()
 
         self.settings["notifications"]["enabled"] = self._notif_check.isChecked()
+
+        schedule = []
+        for i in range(self._sched_list.count()):
+            schedule.append(self._sched_list.item(i).text())
+        self.settings["schedule"] = schedule
+
         self.accept()
+
+    def _add_schedule_time(self):
+        t = self._time_edit.time()
+        t_str = f"{t.hour():02d}:{t.minute():02d}"
+        existing = [self._sched_list.item(i).text() for i in range(self._sched_list.count())]
+        if t_str not in existing:
+            self._sched_list.addItem(t_str)
+            self._sched_list.sortItems()
+
+    def _remove_schedule_time(self):
+        row = self._sched_list.currentRow()
+        if row >= 0:
+            self._sched_list.takeItem(row)

@@ -1,4 +1,3 @@
-import random
 import re
 from datetime import datetime, timedelta
 
@@ -61,7 +60,7 @@ def _md_to_html(text: str) -> str:
     close_ul()
     return "\n".join(html)
 
-from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX, APP_VERSION
+from config import APP_VERSION
 from database import Database, load_settings, save_settings
 from message_server import MessageServer
 from ai_engine import ReportWorker
@@ -81,7 +80,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db = Database()
         self.settings = load_settings()
-        self._seconds_left = REPORT_INTERVAL_NORMAL
         self._report_thread: QThread | None = None
         self._generating = False
         self._latest_report = ""      # report_a — casual summary
@@ -429,7 +427,24 @@ class MainWindow(QMainWindow):
         self.db.add_message(sender, content, date, conversation)
         self._status_label.setText(f"Message received from {sender} ({conversation})")
 
-    # ------------------------------------------------------------------ countdown
+    # ------------------------------------------------------------------ schedule countdown
+
+    def _next_scheduled_dt(self) -> datetime | None:
+        schedule = self.settings.get("schedule", [])
+        if not schedule:
+            return None
+        now = datetime.now()
+        candidates = []
+        for t_str in schedule:
+            try:
+                h, m = map(int, t_str.split(":"))
+            except (ValueError, AttributeError):
+                continue
+            candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=1)
+            candidates.append(candidate)
+        return min(candidates) if candidates else None
 
     def _start_countdown(self):
         self._tick_timer = QTimer(self)
@@ -441,19 +456,28 @@ class MainWindow(QMainWindow):
     def _tick(self):
         if self._generating:
             return
-        if self._seconds_left > 0:
-            self._seconds_left -= 1
+        nxt = self._next_scheduled_dt()
+        if nxt is None:
             self._update_timer_display()
-        else:
+            return
+        if (nxt - datetime.now()).total_seconds() <= 0:
             self._trigger_report(manual=False)
+        else:
+            self._update_timer_display()
 
     def _update_timer_display(self):
-        h = self._seconds_left // 3600
-        m = (self._seconds_left % 3600) // 60
-        s = self._seconds_left % 60
+        nxt = self._next_scheduled_dt()
+        if nxt is None:
+            self._timer_label.setText("--:--:--")
+            self._next_label.setText("no schedule set")
+            return
+        secs = max(0, int((nxt - datetime.now()).total_seconds()))
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        s = secs % 60
         self._timer_label.setText(f"{h:02d}:{m:02d}:{s:02d}")
-        next_time = datetime.now() + timedelta(seconds=self._seconds_left)
-        self._next_label.setText(f"at {next_time.strftime('%H:%M')}")
+        ampm = nxt.strftime("%I:%M %p").lstrip("0").lower()
+        self._next_label.setText(f"at {ampm}")
 
     # ------------------------------------------------------------------ report
 
@@ -469,13 +493,6 @@ class MainWindow(QMainWindow):
         self._status_label.setText("Generating report…")
         self._timer_hint.setText("GENERATING REPORT")
         self._next_label.setText("")
-
-        if manual:
-            interval = random.randint(REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX)
-        else:
-            interval = REPORT_INTERVAL_NORMAL
-        self._seconds_left = interval
-        self._update_timer_display()
 
         if not self._report_area.isVisible():
             self._toggle_report()

@@ -8,9 +8,6 @@ DB_PATH = DATA_DIR / "messages.db"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
 DEFAULT_SERVER_PORT = 774
-REPORT_INTERVAL_NORMAL = 7200       # 2 hours in seconds
-REPORT_INTERVAL_MANUAL_MIN = 1200   # 20 minutes
-REPORT_INTERVAL_MANUAL_MAX = 2400   # 40 minutes
 
 SYSTEM_PROMPT = """\
 You are a personal AI that monitors the user's social life through incoming messages and reports back what matters.
@@ -115,6 +112,7 @@ DEFAULT_SETTINGS = {
     "server": {
         "port": DEFAULT_SERVER_PORT,
     },
+    "schedule": ["07:00", "12:00", "15:00", "20:00"],
     "ai": {
         "provider": "anthropic",
         "anthropic_api_key": "",
