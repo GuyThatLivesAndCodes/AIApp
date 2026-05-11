@@ -59,7 +59,7 @@ class DataDialog(QDialog):
         # action row: count label + delete button
         msg_action_row = QHBoxLayout()
         self._msg_count_label = QLabel()
-        self._msg_count_label.setStyleSheet("color: #556688; font-size: 11px;")
+        self._msg_count_label.setStyleSheet("color: #555555; font-size: 11px;")
         msg_action_row.addWidget(self._msg_count_label)
         msg_action_row.addStretch()
         self._delete_btn = QPushButton("Delete Selected")
@@ -93,7 +93,7 @@ class DataDialog(QDialog):
         rep_layout.addWidget(splitter)
 
         self._rep_count_label = QLabel()
-        self._rep_count_label.setStyleSheet("color: #556688; font-size: 11px;")
+        self._rep_count_label.setStyleSheet("color: #555555; font-size: 11px;")
         rep_layout.addWidget(self._rep_count_label)
 
         tabs.addTab(rep_widget, "Reports")
@@ -120,7 +120,7 @@ class DataDialog(QDialog):
 
         chat_action_row = QHBoxLayout()
         self._chat_count_label = QLabel()
-        self._chat_count_label.setStyleSheet("color: #333333; font-size: 11px;")
+        self._chat_count_label.setStyleSheet("color: #555555; font-size: 11px;")
         chat_action_row.addWidget(self._chat_count_label)
         chat_action_row.addStretch()
         self._delete_chat_btn = QPushButton("Delete Chat")

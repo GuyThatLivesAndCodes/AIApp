@@ -1,6 +1,6 @@
 import random
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
 from PyQt5.QtGui import QFont
 
-from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX
+from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX, APP_VERSION
 from database import Database, load_settings, save_settings
 from message_server import MessageServer
 from ai_engine import ReportWorker
@@ -65,17 +65,22 @@ class MainWindow(QMainWindow):
         # timer section
         content_layout.addStretch(1)
 
-        timer_hint = QLabel("NEXT REPORT IN")
-        timer_hint.setObjectName("sectionLabel")
-        timer_hint.setAlignment(Qt.AlignCenter)
-        content_layout.addWidget(timer_hint)
+        self._timer_hint = QLabel("NEXT REPORT IN")
+        self._timer_hint.setObjectName("sectionLabel")
+        self._timer_hint.setAlignment(Qt.AlignCenter)
+        content_layout.addWidget(self._timer_hint)
 
         self._timer_label = QLabel("02:00:00")
         self._timer_label.setObjectName("timerLabel")
         self._timer_label.setAlignment(Qt.AlignCenter)
         content_layout.addWidget(self._timer_label)
 
-        content_layout.addSpacing(24)
+        self._next_label = QLabel("")
+        self._next_label.setObjectName("nextLabel")
+        self._next_label.setAlignment(Qt.AlignCenter)
+        content_layout.addWidget(self._next_label)
+
+        content_layout.addSpacing(20)
 
         self._report_now_btn = QPushButton("Report Now")
         self._report_now_btn.setObjectName("reportNowBtn")
@@ -93,7 +98,7 @@ class MainWindow(QMainWindow):
         # report toggle
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet("color: #2d2d55;")
+        divider.setStyleSheet("color: #181818;")
         content_layout.addWidget(divider)
         content_layout.addSpacing(6)
 
@@ -146,7 +151,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
 
         # Serve button
-        self._serve_btn = QPushButton("Serve  ▾")
+        self._serve_btn = QPushButton("○  Serve  ▾")
         self._serve_btn.setObjectName("serveBtn")
         self._serve_btn.setProperty("serverRunning", "false")
         self._serve_btn.setFixedHeight(34)
@@ -168,17 +173,21 @@ class MainWindow(QMainWindow):
     def _make_bottom_bar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("bottomBar")
-        bar.setFixedHeight(44)
+        bar.setFixedHeight(40)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setContentsMargins(16, 0, 16, 0)
+
+        version_label = QLabel(f"v{APP_VERSION}")
+        version_label.setObjectName("versionLabel")
+        layout.addWidget(version_label)
 
         layout.addStretch()
+
         settings_btn = QPushButton("Settings")
         settings_btn.setObjectName("settingsBtn")
-        settings_btn.setFixedHeight(28)
+        settings_btn.setFixedHeight(26)
         settings_btn.clicked.connect(self._open_settings)
         layout.addWidget(settings_btn)
-        layout.addStretch()
 
         return bar
 
@@ -234,7 +243,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText(text)
         state = "true" if running else "false"
         self._serve_btn.setProperty("serverRunning", state)
-        self._serve_btn.setText("Serve  ▾")
+        self._serve_btn.setText("●  Running  ▾" if running else "○  Serve  ▾")
         self._serve_btn.style().unpolish(self._serve_btn)
         self._serve_btn.style().polish(self._serve_btn)
 
@@ -268,6 +277,8 @@ class MainWindow(QMainWindow):
         m = (self._seconds_left % 3600) // 60
         s = self._seconds_left % 60
         self._timer_label.setText(f"{h:02d}:{m:02d}:{s:02d}")
+        next_time = datetime.now() + timedelta(seconds=self._seconds_left)
+        self._next_label.setText(f"at {next_time.strftime('%H:%M')}")
 
     # ------------------------------------------------------------------ report
 
@@ -281,6 +292,8 @@ class MainWindow(QMainWindow):
         self._report_now_btn.setEnabled(False)
         self._report_now_btn.setText("Generating…")
         self._status_label.setText("Generating report…")
+        self._timer_hint.setText("GENERATING REPORT")
+        self._next_label.setText("")
 
         if manual:
             interval = random.randint(REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX)
@@ -332,6 +345,8 @@ class MainWindow(QMainWindow):
         self._report_now_btn.setEnabled(True)
         self._report_now_btn.setText("Report Now")
         self._chat_btn.setEnabled(True)
+        self._timer_hint.setText("NEXT REPORT IN")
+        self._update_timer_display()
         self._status_label.setText(f"Report generated at {datetime.now().strftime('%H:%M:%S')}")
 
         if self.settings["notifications"].get("enabled", True):
@@ -343,6 +358,8 @@ class MainWindow(QMainWindow):
         self._generating = False
         self._report_now_btn.setEnabled(True)
         self._report_now_btn.setText("Report Now")
+        self._timer_hint.setText("NEXT REPORT IN")
+        self._update_timer_display()
         self._status_label.setText(f"Report error: {error[:60]}")
 
     # ------------------------------------------------------------------ report toggle

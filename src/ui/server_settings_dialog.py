@@ -33,12 +33,10 @@ class ServerSettingsDialog(QDialog):
         layout.addWidget(group)
 
         hint = QLabel(
-            "Clients send messages to this port in the format:\n"
-            "  sender:Name\n"
-            "  content:Message text\n"
-            "  date:5/9/2026 5:19PM"
+            "POST /message — JSON body:\n"
+            '  {"sender": "Name", "content": "...", "date": "5/9/2026 5:19PM"}'
         )
-        hint.setStyleSheet("color: #556688; font-size: 11px; font-family: 'Courier New';")
+        hint.setStyleSheet("color: #555555; font-size: 11px; font-family: 'Courier New', monospace;")
         layout.addWidget(hint)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

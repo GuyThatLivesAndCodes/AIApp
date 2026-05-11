@@ -11,6 +11,8 @@ from ai_engine import ChatTurnWorker
 
 _SEP_THIN  = "─" * 48
 _SEP_THICK = "═" * 48
+_HDR_YOU   = "─── you " + "─" * 40
+_HDR_AI    = "─── ai  " + "─" * 40
 
 
 class ChatDialog(QDialog):
@@ -114,7 +116,8 @@ class ChatDialog(QDialog):
         self._last_user_msg = text
         self._input.clear()
         self._append_user(text)
-        self._display.appendPlainText("\nAI:")
+        self._display.appendPlainText("")
+        self._display.appendPlainText(_HDR_AI)
 
         self._generating = True
         self._send_btn.setEnabled(False)
@@ -198,7 +201,7 @@ class ChatDialog(QDialog):
 
     def _append_user(self, text: str):
         self._display.appendPlainText("")
-        self._display.appendPlainText("You:")
+        self._display.appendPlainText(_HDR_YOU)
         self._display.appendPlainText(text)
         self._scroll_to_bottom()
 

@@ -98,7 +98,7 @@ class ConnectDialog(QDialog):
         layout.setSpacing(10)
 
         header = QLabel(
-            f"Server is running on  <b style='color:#4a9eff;'>http://localhost:{self.port}</b>"
+            f"Server is running on  <b style='color:#e8e8e8;'>http://localhost:{self.port}</b>"
         )
         header.setTextFormat(Qt.RichText)
         header.setStyleSheet("font-size:14px; padding-bottom:4px;")
@@ -106,7 +106,7 @@ class ConnectDialog(QDialog):
 
         sub = QLabel("Send a <b>POST</b> request to <code>/message</code> with a JSON body for each message.")
         sub.setTextFormat(Qt.RichText)
-        sub.setStyleSheet("color:#888899; font-size:12px;")
+        sub.setStyleSheet("color:#888888; font-size:12px;")
         layout.addWidget(sub)
 
         tabs = QTabWidget()
