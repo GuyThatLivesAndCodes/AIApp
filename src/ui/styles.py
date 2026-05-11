@@ -206,6 +206,15 @@ QTextEdit#reportText, QTextEdit#chatDisplay {
     selection-background-color: #242424;
     selection-color: #ffffff;
 }
+QTextEdit#reportBText {
+    background-color: #060606;
+    border: none;
+    border-radius: 0;
+    padding: 10px 14px;
+    color: #c8c8c8;
+    selection-background-color: #242424;
+    selection-color: #ffffff;
+}
 
 /* ── Status bar ── */
 QLabel#statusLabel {

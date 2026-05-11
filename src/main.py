@@ -1,5 +1,8 @@
 import sys
 import os
+import traceback
+import logging
+from pathlib import Path
 
 # Allow imports from src/ when running as a script or frozen executable
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +15,23 @@ from PyQt5.QtGui import QFont
 
 from ui.styles import DARK_STYLESHEET
 from ui.main_window import MainWindow
+
+# Write unhandled exceptions to a log file so crashes are diagnosable
+_log_dir = Path.home() / "AIApp"
+_log_dir.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(_log_dir / "crash.log"),
+    level=logging.ERROR,
+    format="%(asctime)s\n%(message)s\n",
+)
+
+
+def _excepthook(exc_type, exc_value, exc_tb):
+    logging.error("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _excepthook
 
 
 def main():

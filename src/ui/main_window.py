@@ -1,12 +1,64 @@
 import random
+import re
 from datetime import datetime, timedelta
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QTextEdit, QFrame, QMenu, QAction, QSizePolicy,
+    QPushButton, QTextEdit, QFrame, QMenu, QAction, QSizePolicy, QTabWidget,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QFont
+
+
+def _md_to_html(text: str) -> str:
+    """Convert basic Markdown to HTML suitable for QTextEdit rich-text display."""
+    def inline(s: str) -> str:
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+        s = re.sub(r"__(.+?)__",      r"<b>\1</b>", s)
+        s = re.sub(r"\*(.+?)\*",      r"<em>\1</em>", s)
+        s = re.sub(r"_(.+?)_",        r"<em>\1</em>", s)
+        s = re.sub(r"`(.+?)`",        r'<code style="font-family:monospace;">\1</code>', s)
+        return s
+
+    lines = text.split("\n")
+    html: list[str] = []
+    in_ul = False
+
+    def close_ul():
+        nonlocal in_ul
+        if in_ul:
+            html.append("</ul>")
+            in_ul = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("### "):
+            close_ul()
+            html.append(f'<h3 style="margin:6px 0 2px;color:#d4d4d4;font-size:11pt;">{inline(stripped[4:])}</h3>')
+        elif stripped.startswith("## "):
+            close_ul()
+            html.append(f'<h2 style="margin:10px 0 4px;color:#e8e8e8;font-size:13pt;">{inline(stripped[3:])}</h2>')
+        elif stripped.startswith("# "):
+            close_ul()
+            html.append(f'<h1 style="margin:14px 0 6px;color:#f0f0f0;font-size:15pt;">{inline(stripped[2:])}</h1>')
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            if not in_ul:
+                html.append('<ul style="margin:4px 0;padding-left:20px;">')
+                in_ul = True
+            html.append(f'<li style="margin:2px 0;">{inline(stripped[2:])}</li>')
+        elif stripped.startswith("---") or stripped.startswith("***"):
+            close_ul()
+            html.append('<hr style="border:none;border-top:1px solid #2a2a2a;margin:8px 0;">')
+        elif stripped == "":
+            close_ul()
+            html.append("<br>")
+        else:
+            close_ul()
+            html.append(f'<p style="margin:3px 0;">{inline(stripped)}</p>')
+
+    close_ul()
+    return "\n".join(html)
 
 from config import REPORT_INTERVAL_NORMAL, REPORT_INTERVAL_MANUAL_MIN, REPORT_INTERVAL_MANUAL_MAX, APP_VERSION
 from database import Database, load_settings, save_settings
@@ -31,8 +83,11 @@ class MainWindow(QMainWindow):
         self._seconds_left = REPORT_INTERVAL_NORMAL
         self._report_thread: QThread | None = None
         self._generating = False
-        self._latest_report = ""
+        self._latest_report = ""      # report_a — casual summary
+        self._latest_report_b = ""   # report_b — detailed markdown
         self._log_lines: list[str] = []
+
+        self._chat_dlg: ChatDialog | None = None   # keep ref to prevent GC of Python wrapper
 
         self._bring_to_front.connect(self._show_window)
         self._build_ui()
@@ -121,13 +176,39 @@ class MainWindow(QMainWindow):
         self._report_area = QWidget()
         report_area_layout = QVBoxLayout(self._report_area)
         report_area_layout.setContentsMargins(0, 4, 0, 4)
+        report_area_layout.setSpacing(6)
+
+        self._report_tabs = QTabWidget()
+        self._report_tabs.setMinimumHeight(120)
+        self._report_tabs.setMaximumHeight(220)
+
+        # Tab A — casual summary (monospace chat font)
+        tab_a = QWidget()
+        tab_a_layout = QVBoxLayout(tab_a)
+        tab_a_layout.setContentsMargins(0, 4, 0, 0)
         self._report_text = QTextEdit()
         self._report_text.setObjectName("reportText")
         self._report_text.setReadOnly(True)
         self._report_text.setPlaceholderText("No reports generated yet. Click 'Report Now' to generate one.")
-        self._report_text.setMinimumHeight(100)
-        self._report_text.setMaximumHeight(180)
-        report_area_layout.addWidget(self._report_text)
+        tab_a_layout.addWidget(self._report_text)
+        self._report_tabs.addTab(tab_a, "Summary")
+
+        # Tab B — detailed markdown report (Times New Roman, rich text)
+        tab_b = QWidget()
+        tab_b_layout = QVBoxLayout(tab_b)
+        tab_b_layout.setContentsMargins(0, 4, 0, 0)
+        self._report_b_text = QTextEdit()
+        self._report_b_text.setObjectName("reportBText")
+        self._report_b_text.setReadOnly(True)
+        self._report_b_text.setAcceptRichText(True)
+        self._report_b_text.setPlaceholderText("Detailed report will appear here after generation.")
+        _serif = QFont("Times New Roman", 11)
+        self._report_b_text.setFont(_serif)
+        self._report_b_text.document().setDefaultFont(_serif)
+        tab_b_layout.addWidget(self._report_b_text)
+        self._report_tabs.addTab(tab_b, "Detailed")
+
+        report_area_layout.addWidget(self._report_tabs)
 
         chat_row = QHBoxLayout()
         chat_row.addStretch()
@@ -328,6 +409,9 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"Error: {error}")
 
     def _on_message_received(self, sender: str, content: str, date: str, conversation: str):
+        if self.db.message_exists(sender, content, date, conversation):
+            self._status_label.setText(f"Duplicate skipped from {sender} ({conversation})")
+            return
         self.db.add_message(sender, content, date, conversation)
         self._status_label.setText(f"Message received from {sender} ({conversation})")
 
@@ -382,7 +466,9 @@ class MainWindow(QMainWindow):
         if not self._report_area.isVisible():
             self._toggle_report()
         self._report_text.setPlainText("")
+        self._report_b_text.setPlainText("")
         self._log_lines = []
+        self._report_tabs.setCurrentIndex(0)   # show Summary tab during generation
 
         worker = ReportWorker(self.db, self.settings)
         thread = QThread()
@@ -407,15 +493,32 @@ class MainWindow(QMainWindow):
         sb = self._report_text.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    @pyqtSlot(str)
-    def _on_report_done(self, report: str):
-        self._latest_report = report
-        self.db.add_report(report)
+    @pyqtSlot(str, str)
+    def _on_report_done(self, report_a: str, report_b: str):
+        self._latest_report = report_a
+        self._latest_report_b = report_b
+        self.db.add_report(report_a, report_b)
+
+        # Summary tab: log lines + casual report_a
         separator = "─" * 40
-        full_text = "\n".join(self._log_lines) + f"\n\n{separator}\n\n{report}"
+        full_text = "\n".join(self._log_lines) + f"\n\n{separator}\n\n{report_a}"
         self._report_text.setPlainText(full_text)
         sb = self._report_text.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+        # Detailed tab: markdown report_b rendered as HTML
+        if report_b:
+            html = _md_to_html(report_b)
+            self._report_b_text.setHtml(
+                f'<html><body style="font-family:\'Times New Roman\',serif;'
+                f'font-size:12pt;color:#cccccc;background:#060606;">'
+                f'{html}</body></html>'
+            )
+            sb2 = self._report_b_text.verticalScrollBar()
+            sb2.setValue(0)
+        else:
+            self._report_b_text.setPlainText(report_a)
+
         self._generating = False
         self._report_now_btn.setEnabled(True)
         self._report_now_btn.setText("Report Now")
@@ -452,8 +555,16 @@ class MainWindow(QMainWindow):
     def _open_chat(self):
         if not self._latest_report:
             return
-        dlg = ChatDialog(self.db, self.settings, self._latest_report, self)
-        dlg.show()
+        # Store reference to prevent Python GC of the wrapper while the dialog is open.
+        # Without this, the C++ parent keeps the dialog alive but the Python wrapper
+        # (and its bound slots) can be collected, silently breaking signal connections.
+        self._chat_dlg = ChatDialog(self.db, self.settings, self._latest_report, self)
+        self._chat_dlg.finished.connect(self._on_chat_closed)
+        self._chat_dlg.show()
+
+    @pyqtSlot()
+    def _on_chat_closed(self):
+        self._chat_dlg = None
 
     def _open_connect_help(self):
         dlg = ConnectDialog(self.settings["server"]["port"], self)

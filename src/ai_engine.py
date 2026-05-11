@@ -1,9 +1,11 @@
+import copy
 import json
+import traceback
 from typing import Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from config import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from config import SYSTEM_PROMPT, REPORT_SYSTEM_PROMPT, TOOL_DEFINITIONS
 from database import Database
 
 
@@ -45,6 +47,25 @@ def _user_context_lines(settings: dict) -> list[str]:
     if custom:
         lines.append(f"  About the user: {custom}")
     return lines
+
+
+# ------------------------------------------------------------------ report splitter
+
+_REPORT_SEP = "===CASUAL==="
+
+
+def _split_reports(text: str) -> tuple[str, str]:
+    """Split a two-part AI response into (report_a, report_b).
+
+    Returns (report_a, report_b). If the separator is absent the whole text
+    is treated as report_a with an empty report_b.
+    """
+    if _REPORT_SEP in text:
+        parts = text.split(_REPORT_SEP, 1)
+        report_b = parts[0].strip()
+        report_a = parts[1].strip()
+        return report_a, report_b
+    return text.strip(), ""
 
 
 # ------------------------------------------------------------------ context builder
@@ -100,9 +121,9 @@ def _build_context_message(db: Database, settings: dict) -> str:
     lines.append("")
     lines.append(
         "Using the messages above (and any additional ones you fetch with tools), "
-        "generate your casual, direct report now. "
-        "If something significant happened — relationships, drama, plans — call it out. "
-        "Keep it one or two sentences max."
+        "write your two-part report now following the format in your instructions. "
+        "Start with the detailed Part B (markdown), then the ===CASUAL=== separator, "
+        "then the short casual Part A."
     )
 
     return "\n".join(lines)
@@ -232,7 +253,7 @@ def _serialise_tool_calls(tool_calls) -> list[dict]:
 
 # ------------------------------------------------------------------ provider runners
 
-def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
+def _run_anthropic(db: Database, settings: dict, log_fn=None) -> tuple[str, str]:
     import anthropic
 
     def log(msg):
@@ -249,8 +270,8 @@ def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
     for _ in range(15):
         resp = client.messages.create(
             model=model,
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            max_tokens=2048,
+            system=REPORT_SYSTEM_PROMPT,
             tools=_anthropic_tools(),
             messages=messages,
         )
@@ -258,8 +279,8 @@ def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
             for block in resp.content:
                 if hasattr(block, "text"):
                     log("── writing report ──")
-                    return block.text
-            return "No report generated."
+                    return _split_reports(block.text)
+            return "", ""
 
         if resp.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": resp.content})
@@ -276,12 +297,12 @@ def _run_anthropic(db: Database, settings: dict, log_fn=None) -> str:
         else:
             break
 
-    return "Report generation stopped unexpectedly."
+    return "Report generation stopped unexpectedly.", ""
 
 
 def _run_openai_compat(
     db: Database, settings: dict, api_key: str, base_url: Optional[str], model: str, log_fn=None
-) -> str:
+) -> tuple[str, str]:
     from openai import OpenAI
 
     def log(msg):
@@ -295,7 +316,7 @@ def _run_openai_compat(
     client = OpenAI(**kwargs)
     user_msg = _build_context_message(db, settings)
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": REPORT_SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
     tools = _openai_tools()
@@ -316,14 +337,14 @@ def _run_openai_compat(
                 log("⚠ tools not supported by this model — running without")
                 resp = client.chat.completions.create(model=model, messages=messages)
                 log("── writing report ──")
-                return resp.choices[0].message.content or "No report generated."
+                return _split_reports(resp.choices[0].message.content or "")
             raise
 
         choice = resp.choices[0]
 
         if choice.finish_reason == "stop":
             log("── writing report ──")
-            return choice.message.content or "No report generated."
+            return _split_reports(choice.message.content or "")
 
         if choice.finish_reason == "tool_calls":
             # Explicit dict — third-party APIs (xAI, LM Studio) reject Pydantic model objects
@@ -342,7 +363,7 @@ def _run_openai_compat(
         else:
             break
 
-    return "Report generation stopped unexpectedly."
+    return "Report generation stopped unexpectedly.", ""
 
 
 # ------------------------------------------------------------------ local model detection
@@ -367,23 +388,24 @@ def _detect_local_model(host: str, port: int, provider: str) -> str:
 
 # ------------------------------------------------------------------ public entry point
 
-def generate_report(db: Database, settings: dict, log_fn=None) -> str:
+def generate_report(db: Database, settings: dict, log_fn=None) -> tuple[str, str]:
+    """Return (report_a, report_b). report_a is the casual summary; report_b is the detailed one."""
     provider = settings["ai"].get("provider", "anthropic")
 
     if provider == "anthropic":
         if not settings["ai"].get("anthropic_api_key"):
-            return "no anthropic api key configured — add one in Settings"
+            return "no anthropic api key configured — add one in Settings", ""
         return _run_anthropic(db, settings, log_fn=log_fn)
 
     elif provider == "openai":
         if not settings["ai"].get("openai_api_key"):
-            return "no openai api key configured — add one in Settings"
+            return "no openai api key configured — add one in Settings", ""
         model = settings["ai"].get("openai_model", "gpt-4o")
         return _run_openai_compat(db, settings, settings["ai"]["openai_api_key"], None, model, log_fn)
 
     elif provider == "xai":
         if not settings["ai"].get("xai_api_key"):
-            return "no xai api key configured — add one in Settings"
+            return "no xai api key configured — add one in Settings", ""
         model = settings["ai"].get("xai_model", "grok-3")
         return _run_openai_compat(db, settings, settings["ai"]["xai_api_key"], "https://api.x.ai/v1", model, log_fn)
 
@@ -399,7 +421,7 @@ def generate_report(db: Database, settings: dict, log_fn=None) -> str:
         model = settings["ai"].get("lm_studio_model") or _detect_local_model(host, port, "lm_studio")
         return _run_openai_compat(db, settings, "lm-studio", f"http://{host}:{port}/v1", model, log_fn)
 
-    return "unknown provider selected"
+    return "unknown provider selected", ""
 
 
 # ------------------------------------------------------------------ chat turn runners
@@ -544,21 +566,21 @@ def run_chat_turn(
 # ------------------------------------------------------------------ async workers
 
 class ReportWorker(QObject):
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(str, str)   # report_a (casual), report_b (detailed)
     error = pyqtSignal(str)
     log_update = pyqtSignal(str)
 
     def __init__(self, db: Database, settings: dict):
         super().__init__()
         self._db = db
-        self._settings = settings
+        self._settings = copy.deepcopy(settings)
 
     def run(self):
         try:
-            report = generate_report(self._db, self._settings, log_fn=self.log_update.emit)
-            self.finished.emit(report)
+            report_a, report_b = generate_report(self._db, self._settings, log_fn=self.log_update.emit)
+            self.finished.emit(report_a, report_b)
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
 class ChatTurnWorker(QObject):
@@ -569,7 +591,7 @@ class ChatTurnWorker(QObject):
     def __init__(self, db: Database, settings: dict, history: list, user_message: str):
         super().__init__()
         self._db = db
-        self._settings = settings
+        self._settings = copy.deepcopy(settings)   # isolate from main-thread mutations
         self._history = history
         self._user_message = user_message
 
@@ -581,4 +603,4 @@ class ChatTurnWorker(QObject):
             )
             self.finished.emit(response)
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(f"{e}\n\n{traceback.format_exc()}")

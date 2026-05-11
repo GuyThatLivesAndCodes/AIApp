@@ -95,6 +95,7 @@ class Database:
             for migration in [
                 "ALTER TABLE messages ADD COLUMN date_ts TEXT",
                 "ALTER TABLE messages ADD COLUMN conversation TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE reports ADD COLUMN content_b TEXT NOT NULL DEFAULT ''",
             ]:
                 try:
                     conn.execute(migration)
@@ -119,6 +120,15 @@ class Database:
                     )
 
     # ------------------------------------------------------------------ messages
+
+    def message_exists(self, sender: str, content: str, date: str, conversation: str) -> bool:
+        """Return True if an identical (sender, content, date, conversation) row already exists."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM messages WHERE sender=? AND content=? AND date=? AND conversation=? LIMIT 1",
+                (sender, content, date, conversation),
+            ).fetchone()
+        return row is not None
 
     def add_message(self, sender: str, content: str, date: str, conversation: str = "") -> int:
         date_ts = parse_date_to_iso(date)
@@ -259,9 +269,12 @@ class Database:
 
     # ------------------------------------------------------------------ reports
 
-    def add_report(self, content: str) -> int:
+    def add_report(self, content_a: str, content_b: str = "") -> int:
         with self._connect() as conn:
-            cur = conn.execute("INSERT INTO reports (content) VALUES (?)", (content,))
+            cur = conn.execute(
+                "INSERT INTO reports (content, content_b) VALUES (?, ?)",
+                (content_a, content_b),
+            )
             return cur.lastrowid
 
     def get_latest_report(self) -> Optional[dict]:
