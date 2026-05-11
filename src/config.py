@@ -133,6 +133,7 @@ DEFAULT_SETTINGS = {
     "notifications": {
         "enabled": True,
     },
+    "report_instructions": "",
     "user": {
         "name": "",
         "context": {

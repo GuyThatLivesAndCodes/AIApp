@@ -112,6 +112,29 @@ QPushButton#settingsBtn:hover {
     color: #aaaaaa;
 }
 
+/* ── Report Specifics button ── */
+QPushButton#specificsBtn {
+    background-color: transparent;
+    border: 1px solid #1e1e1e;
+    color: #404040;
+    font-size: 11px;
+    padding: 4px 14px;
+    border-radius: 4px;
+}
+QPushButton#specificsBtn:hover {
+    background-color: #111111;
+    border-color: #2e2e2e;
+    color: #aaaaaa;
+}
+QPushButton#specificsBtn[specificsActive="true"] {
+    border-color: #2a2a2a;
+    color: #787878;
+}
+QPushButton#specificsBtn[specificsActive="true"]:hover {
+    color: #cccccc;
+    border-color: #383838;
+}
+
 /* ── Report toggle ── */
 QPushButton#toggleReportBtn {
     background-color: transparent;

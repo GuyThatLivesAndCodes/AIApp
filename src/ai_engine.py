@@ -129,6 +129,13 @@ def _build_context_message(db: Database, settings: dict) -> str:
             f"Search by sender name, conversation name, date ranges, and keywords to be thorough."
         )
 
+    instructions = settings.get("report_instructions", "").strip()
+    if instructions:
+        lines.append("")
+        lines.append("SPECIFIC FOCUS REQUESTED BY USER:")
+        lines.append(instructions)
+        lines.append("Address the above directly in both parts of your report.")
+
     lines.append("")
     lines.append(
         "Using the messages above (and any additional ones you fetch with tools), "

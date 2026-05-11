@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame, QMenu, QAction, QSizePolicy, QTabWidget,
+    QInputDialog,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QFont
@@ -154,6 +155,19 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self._report_now_btn)
         btn_row.addStretch()
         right_layout.addLayout(btn_row)
+
+        right_layout.addSpacing(10)
+
+        self._specifics_btn = QPushButton("＋  Report Specifics")
+        self._specifics_btn.setObjectName("specificsBtn")
+        self._specifics_btn.clicked.connect(self._open_report_specifics)
+        self._specifics_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        specifics_row = QHBoxLayout()
+        specifics_row.addStretch()
+        specifics_row.addWidget(self._specifics_btn)
+        specifics_row.addStretch()
+        right_layout.addLayout(specifics_row)
+        self._refresh_specifics_btn()
 
         right_layout.addStretch(1)
 
@@ -582,6 +596,27 @@ class MainWindow(QMainWindow):
     def _open_data(self):
         dlg = DataDialog(self.db, self)
         dlg.exec_()
+
+    def _open_report_specifics(self):
+        current = self.settings.get("report_instructions", "")
+        text, ok = QInputDialog.getMultiLineText(
+            self,
+            "Report Specifics",
+            "What should the AI focus on or dig into?\n"
+            "These instructions are added to every report until you clear them.",
+            current,
+        )
+        if ok:
+            self.settings["report_instructions"] = text.strip()
+            save_settings(self.settings)
+            self._refresh_specifics_btn()
+
+    def _refresh_specifics_btn(self):
+        active = bool(self.settings.get("report_instructions", "").strip())
+        self._specifics_btn.setText("●  Report Specifics" if active else "＋  Report Specifics")
+        self._specifics_btn.setProperty("specificsActive", "true" if active else "false")
+        self._specifics_btn.style().unpolish(self._specifics_btn)
+        self._specifics_btn.style().polish(self._specifics_btn)
 
     def _open_context_editor(self):
         dlg = ContextDialog(self.db, self.settings, self)
