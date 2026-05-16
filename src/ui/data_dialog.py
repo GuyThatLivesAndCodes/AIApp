@@ -1,3 +1,6 @@
+import csv
+import os
+from pathlib import Path
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QTabWidget, QWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QLabel, QTextEdit, QListWidget,
@@ -62,6 +65,13 @@ class DataDialog(QDialog):
         self._msg_count_label.setStyleSheet("color: #555555; font-size: 11px;")
         msg_action_row.addWidget(self._msg_count_label)
         msg_action_row.addStretch()
+        self._download_btn = QPushButton("Download All Messages")
+        self._download_btn.setStyleSheet(
+            "QPushButton{background:#0d0d0d;border:1px solid #2a2a2a;color:#606060;}"
+            "QPushButton:hover{background:#0d1a0d;border-color:#2a4a2a;color:#88cc88;}"
+        )
+        self._download_btn.clicked.connect(self._export_csv)
+        msg_action_row.addWidget(self._download_btn)
         self._delete_btn = QPushButton("Delete Selected")
         self._delete_btn.setEnabled(False)
         self._delete_btn.setStyleSheet(_DELETE_STYLE)
@@ -254,3 +264,24 @@ class DataDialog(QDialog):
         row = self._rep_list.currentRow()
         if 0 <= row < len(self._reports_data):
             self._rep_detail.setPlainText(self._reports_data[row])
+
+    def _export_csv(self):
+        messages = self.db.get_all_messages()
+        if not messages:
+            QMessageBox.information(self, "Export", "No messages to export.")
+            return
+
+        downloads = Path.home() / "Downloads"
+        downloads.mkdir(exist_ok=True)
+        dest = downloads / "aiapp_messages.csv"
+
+        with open(dest, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["id", "sender", "conversation", "date", "content", "received_at"],
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(messages)
+
+        QMessageBox.information(self, "Export Complete", f"Saved to:\n{dest}")
